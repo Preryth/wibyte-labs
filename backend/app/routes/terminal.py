@@ -1,9 +1,9 @@
 import asyncio
+import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from backend.app.services.lab_service import lab_service
-
 
 
 router = APIRouter()
@@ -16,7 +16,12 @@ async def terminal(websocket: WebSocket, lab_id: str):
     session = lab_service.get(lab_id)
 
     if session is None:
-        await websocket.send_text("Lab not found")
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": "Lab not found",
+            }
+        )
         await websocket.close()
         return
 
@@ -33,14 +38,30 @@ async def terminal(websocket: WebSocket, lab_id: str):
             if not data:
                 break
 
-            await websocket.send_text(
-                data.decode("utf-8", errors="replace")
+            await websocket.send_json(
+                {
+                    "type": "output",
+                    "data": data.decode(
+                        "utf-8",
+                        errors="replace",
+                    ),
+                }
             )
 
     async def websocket_to_docker():
         while True:
-            message = await websocket.receive_text()
-            await terminal_session.write(message)
+            raw_message = await websocket.receive_text()
+
+            try:
+                message = json.loads(raw_message)
+            except json.JSONDecodeError:
+                continue
+
+            message_type = message.get("type")
+
+            if message_type == "input":
+                data = message.get("data", "")
+                await terminal_session.write(data)
 
     try:
         await asyncio.gather(
