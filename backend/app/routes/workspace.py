@@ -16,8 +16,16 @@ class CreateFileRequest(BaseModel):
     type: str = "file"
 
 
+class RenameFileRequest(BaseModel):
+    old_path: str
+    new_path: str
+
+
 @router.get("/labs/{lab_id}/files")
-def list_files(lab_id: str, path: str = "."):
+def list_files(
+    lab_id: str,
+    path: str = ".",
+):
     session = lab_service.get(lab_id)
 
     if session is None:
@@ -52,8 +60,13 @@ def list_files(lab_id: str, path: str = "."):
         )
 
 
-@router.get("/labs/{lab_id}/files/{path:path}")
-def read_file(lab_id: str, path: str):
+@router.get(
+    "/labs/{lab_id}/files/{path:path}"
+)
+def read_file(
+    lab_id: str,
+    path: str,
+):
     session = lab_service.get(lab_id)
 
     if session is None:
@@ -88,7 +101,9 @@ def read_file(lab_id: str, path: str):
         )
 
 
-@router.put("/labs/{lab_id}/files/{path:path}")
+@router.put(
+    "/labs/{lab_id}/files/{path:path}"
+)
 def write_file(
     lab_id: str,
     path: str,
@@ -123,7 +138,9 @@ def write_file(
         )
 
 
-@router.post("/labs/{lab_id}/files")
+@router.post(
+    "/labs/{lab_id}/files"
+)
 def create_file(
     lab_id: str,
     request: CreateFileRequest,
@@ -144,15 +161,20 @@ def create_file(
                 session.container_id,
                 request.path,
             )
+
         elif request.type == "file":
             workspace_service.create_file(
                 session.container_id,
                 request.path,
             )
+
         else:
             raise HTTPException(
                 status_code=400,
-                detail="Type must be 'file' or 'directory'",
+                detail=(
+                    "Type must be "
+                    "'file' or 'directory'"
+                ),
             )
 
         return {
@@ -168,7 +190,61 @@ def create_file(
         )
 
 
-@router.delete("/labs/{lab_id}/files/{path:path}")
+@router.post(
+    "/labs/{lab_id}/files/rename"
+)
+def rename_file(
+    lab_id: str,
+    request: RenameFileRequest,
+):
+    session = lab_service.get(lab_id)
+
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Lab not found",
+        )
+
+    workspace_service = router.workspace_service
+
+    try:
+        workspace_service.rename(
+            session.container_id,
+            request.old_path,
+            request.new_path,
+        )
+
+        return {
+            "old_path": request.old_path,
+            "new_path": request.new_path,
+            "status": "renamed",
+        }
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="File or directory not found",
+        )
+
+    except FileExistsError:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A file or directory with "
+                "that name already exists"
+            ),
+        )
+
+
+@router.delete(
+    "/labs/{lab_id}/files/{path:path}"
+)
 def delete_file(
     lab_id: str,
     path: str,
@@ -198,6 +274,12 @@ def delete_file(
         raise HTTPException(
             status_code=400,
             detail=str(exc),
+        )
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="File or directory not found",
         )
 
 
