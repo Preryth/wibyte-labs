@@ -2,7 +2,7 @@
 
 The browser-based student interface for WiByte Labs.
 
-The frontend will provide:
+## Planned Features
 
 - Code editor
 - File explorer
@@ -11,8 +11,18 @@ The frontend will provide:
 - Lab/session controls
 - Authentication interface
 
-Planned technology:
+## Technology
 
 - React
 - TypeScript
 - Vite
+- ESLint
+
+## Development
+
+The frontend is currently a Vite React + TypeScript application.
+
+Run the development server from this directory with:
+
+```bash
+npm run dev
