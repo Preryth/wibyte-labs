@@ -6,6 +6,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.models.lab import LabSession
+from backend.app.routes.terminal import router as terminal_router
+from backend.app.services.lab_service import lab_service
+from backend.app.services.terminal_service import TerminalService
+
 
 app = FastAPI(title="WPL Backend")
 
@@ -17,9 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(terminal_router)
+
 docker_client = docker.from_env()
 
-lab_sessions: dict[str, LabSession] = {}
+app.state.docker_client = docker_client
+app.state.terminal_service = TerminalService(docker_client)
 
 
 @app.get("/health")
@@ -45,7 +52,7 @@ def create_lab():
         created_at=datetime.now(timezone.utc),
     )
 
-    lab_sessions[session_id] = session
+    lab_service.add(session)
 
     return {
         "lab_id": session.id,
@@ -55,7 +62,7 @@ def create_lab():
 
 @app.delete("/labs/{lab_id}")
 def delete_lab(lab_id: str):
-    session = lab_sessions.get(lab_id)
+    session = lab_service.get(lab_id)
 
     if session is None:
         raise HTTPException(status_code=404, detail="Lab not found")
@@ -67,6 +74,7 @@ def delete_lab(lab_id: str):
         pass
 
     session.status = "removed"
+    lab_service.remove(lab_id)
 
     return {
         "lab_id": session.id,
