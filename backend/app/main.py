@@ -1,6 +1,11 @@
-﻿from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+﻿from datetime import datetime, timezone
+from uuid import uuid4
+
 import docker
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+from backend.app.models.lab import LabSession
 
 app = FastAPI(title="WPL Backend")
 
@@ -13,6 +18,8 @@ app.add_middleware(
 )
 
 docker_client = docker.from_env()
+
+lab_sessions: dict[str, LabSession] = {}
 
 
 @app.get("/health")
@@ -29,17 +36,39 @@ def create_lab():
         stdin_open=True,
     )
 
+    session_id = str(uuid4())
+
+    session = LabSession(
+        id=session_id,
+        container_id=container.id,
+        status="running",
+        created_at=datetime.now(timezone.utc),
+    )
+
+    lab_sessions[session_id] = session
+
     return {
-        "container_id": container.id,
-        "status": "running",
+        "lab_id": session.id,
+        "status": session.status,
     }
-@app.delete("/labs/{container_id}")
-def delete_lab(container_id: str):
-    container = docker_client.containers.get(container_id)
 
-    container.remove(force=True)
+
+@app.delete("/labs/{lab_id}")
+def delete_lab(lab_id: str):
+    session = lab_sessions.get(lab_id)
+
+    if session is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
+
+    try:
+        container = docker_client.containers.get(session.container_id)
+        container.remove(force=True)
+    except docker.errors.NotFound:
+        pass
+
+    session.status = "removed"
 
     return {
-        "container_id": container_id,
-        "status": "removed",
+        "lab_id": session.id,
+        "status": session.status,
     }
