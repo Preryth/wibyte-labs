@@ -10,6 +10,7 @@ import Terminal, {
 } from "./Terminal";
 
 import CodeEditor from "./CodeEditor";
+
 import "./App.css";
 
 
@@ -27,50 +28,265 @@ function App() {
   const [
     backendStatus,
     setBackendStatus,
-  ] = useState("Checking backend...");
+  ] = useState(
+    "Checking backend..."
+  );
+
 
   const [
     labId,
     setLabId,
-  ] = useState<string | null>(null);
+  ] = useState<string | null>(
+    null
+  );
+
 
   const [
     creatingLab,
     setCreatingLab,
   ] = useState(false);
 
+
   const [
     files,
     setFiles,
   ] = useState<LabFile[]>([]);
 
+
   const [
     selectedFile,
     setSelectedFile,
-  ] = useState<string | null>(null);
+  ] = useState<string | null>(
+    null
+  );
+
 
   const [
     fileContent,
     setFileContent,
   ] = useState("");
 
+
   const [
     loadingFile,
     setLoadingFile,
   ] = useState(false);
+
 
   const [
     savingFile,
     setSavingFile,
   ] = useState(false);
 
+
   const [
     running,
     setRunning,
   ] = useState(false);
 
+
   const terminalRef =
-    useRef<TerminalHandle | null>(null);
+    useRef<TerminalHandle | null>(
+      null
+    );
+
+
+  /*
+   * -------------------------------------------------------
+   * Lab activity tracking
+   * -------------------------------------------------------
+   *
+   * Editor changes can happen many times per second.
+   *
+   * We therefore:
+   *
+   * 1. Send activity immediately on the first edit.
+   * 2. While the student keeps typing, send at most
+   *    one activity request every 10 seconds.
+   *
+   * This prevents one HTTP request per keystroke while
+   * still ensuring that continuous coding keeps the
+   * lab's last_activity_at timestamp fresh.
+   */
+
+  const lastActivitySentAtRef =
+    useRef(0);
+
+
+  const activityTimerRef =
+    useRef<ReturnType<
+      typeof setTimeout
+    > | null>(null);
+
+
+  const reportLabActivity =
+    useCallback(
+      async (id: string) => {
+        try {
+          const response =
+            await fetch(
+              `${API_URL}/labs/${id}/activity`,
+              {
+                method: "POST",
+              }
+            );
+
+
+          if (!response.ok) {
+            console.warn(
+              "Failed to record lab activity."
+            );
+          }
+
+        } catch (error) {
+          /*
+           * Activity tracking should never
+           * interfere with the coding
+           * experience if the request fails.
+           */
+
+          console.warn(
+            "Lab activity request failed:",
+            error
+          );
+        }
+      },
+      []
+    );
+
+
+  const handleEditorActivity =
+    useCallback(() => {
+      const id = labId;
+
+      if (!id) {
+        return;
+      }
+
+
+      const now =
+        Date.now();
+
+
+      const elapsed =
+        now -
+        lastActivitySentAtRef.current;
+
+
+      /*
+       * Send immediately if:
+       *
+       * - this is the first activity
+       * - at least 10 seconds have passed
+       */
+
+      if (
+        lastActivitySentAtRef.current ===
+          0 ||
+        elapsed >= 10_000
+      ) {
+        lastActivitySentAtRef.current =
+          now;
+
+        if (
+          activityTimerRef.current !==
+          null
+        ) {
+          clearTimeout(
+            activityTimerRef.current
+          );
+
+          activityTimerRef.current =
+            null;
+        }
+
+        void reportLabActivity(
+          id
+        );
+
+        return;
+      }
+
+
+      /*
+       * Activity happened inside the
+       * 10-second cooldown.
+       *
+       * Schedule one update for when
+       * the cooldown expires.
+       */
+
+      if (
+        activityTimerRef.current ===
+        null
+      ) {
+        const remaining =
+          10_000 - elapsed;
+
+
+        activityTimerRef.current =
+          setTimeout(() => {
+            activityTimerRef.current =
+              null;
+
+            /*
+             * Re-check that this lab is
+             * still the active lab.
+             */
+
+            if (labId) {
+              lastActivitySentAtRef.current =
+                Date.now();
+
+              void reportLabActivity(
+                labId
+              );
+            }
+          }, remaining);
+      }
+    }, [
+      labId,
+      reportLabActivity,
+    ]);
+
+
+  /*
+   * Reset activity tracking whenever
+   * the active lab changes.
+   */
+
+  useEffect(() => {
+    lastActivitySentAtRef.current =
+      0;
+
+
+    if (
+      activityTimerRef.current !==
+      null
+    ) {
+      clearTimeout(
+        activityTimerRef.current
+      );
+
+      activityTimerRef.current =
+        null;
+    }
+
+
+    return () => {
+      if (
+        activityTimerRef.current !==
+        null
+      ) {
+        clearTimeout(
+          activityTimerRef.current
+        );
+
+        activityTimerRef.current =
+          null;
+      }
+    };
+  }, [labId]);
 
 
   /*
@@ -82,18 +298,20 @@ function App() {
       .then((response) => {
         if (!response.ok) {
           throw new Error(
-            "Backend returned an error",
+            "Backend returned an error"
           );
         }
 
         return response.json();
       })
       .then((data) => {
-        setBackendStatus(data.status);
+        setBackendStatus(
+          data.status
+        );
       })
       .catch(() => {
         setBackendStatus(
-          "Backend unavailable",
+          "Backend unavailable"
         );
       });
   }, []);
@@ -107,35 +325,51 @@ function App() {
     setCreatingLab(true);
 
     try {
-      const response = await fetch(
-        `${API_URL}/labs`,
-        {
-          method: "POST",
-        },
-      );
+      const response =
+        await fetch(
+          `${API_URL}/labs`,
+          {
+            method: "POST",
+          }
+        );
+
 
       if (!response.ok) {
         throw new Error(
-          "Failed to create lab",
+          "Failed to create lab"
         );
       }
+
 
       const data =
         await response.json();
 
-      setLabId(data.lab_id);
+
+      setLabId(
+        data.lab_id
+      );
+
       setFiles([]);
-      setSelectedFile(null);
+
+      setSelectedFile(
+        null
+      );
+
       setFileContent("");
+
       setRunning(false);
+
     } catch (error) {
       console.error(error);
 
       alert(
-        "Failed to create lab",
+        "Failed to create lab"
       );
+
     } finally {
-      setCreatingLab(false);
+      setCreatingLab(
+        false
+      );
     }
   }
 
@@ -149,13 +383,15 @@ function App() {
       return;
     }
 
+
     if (
       !window.confirm(
-        "Close this lab? All files in this lab will be lost.",
+        "Close this lab? All files in this lab will be lost."
       )
     ) {
       return;
     }
+
 
     try {
       /*
@@ -167,29 +403,40 @@ function App() {
         terminalRef.current?.stopProcess();
       }
 
-      const response = await fetch(
-        `${API_URL}/labs/${labId}`,
-        {
-          method: "DELETE",
-        },
-      );
+
+      const response =
+        await fetch(
+          `${API_URL}/labs/${labId}`,
+          {
+            method: "DELETE",
+          }
+        );
+
 
       if (!response.ok) {
         throw new Error(
-          "Failed to delete lab",
+          "Failed to delete lab"
         );
       }
 
+
       setLabId(null);
+
       setFiles([]);
-      setSelectedFile(null);
+
+      setSelectedFile(
+        null
+      );
+
       setFileContent("");
+
       setRunning(false);
+
     } catch (error) {
       console.error(error);
 
       alert(
-        "Failed to delete lab",
+        "Failed to delete lab"
       );
     }
   }
@@ -200,28 +447,35 @@ function App() {
    */
 
   async function loadFiles(
-    id: string,
+    id: string
   ) {
     try {
-      const response = await fetch(
-        `${API_URL}/labs/${id}/files`,
-      );
+      const response =
+        await fetch(
+          `${API_URL}/labs/${id}/files`
+        );
+
 
       if (!response.ok) {
         throw new Error(
-          "Failed to load files",
+          "Failed to load files"
         );
       }
+
 
       const data =
         await response.json();
 
-      setFiles(data.files);
+
+      setFiles(
+        data.files
+      );
+
     } catch (error) {
       console.error(error);
 
       alert(
-        "Failed to load files",
+        "Failed to load files"
       );
     }
   }
@@ -236,7 +490,10 @@ function App() {
       return;
     }
 
-    loadFiles(labId);
+
+    loadFiles(
+      labId
+    );
   }, [labId]);
 
 
@@ -249,60 +506,79 @@ function App() {
       return;
     }
 
+
     const fileName =
       window.prompt(
-        "Enter file name:",
+        "Enter file name:"
       );
+
 
     if (!fileName) {
       return;
     }
 
+
     const path =
       fileName.trim();
+
 
     if (!path) {
       return;
     }
 
+
     try {
-      const response = await fetch(
-        `${API_URL}/labs/${labId}/files`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-          body: JSON.stringify({
-            path,
-            type: "file",
-          }),
-        },
-      );
+      const response =
+        await fetch(
+          `${API_URL}/labs/${labId}/files`,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify({
+              path,
+              type: "file",
+            }),
+          }
+        );
+
 
       if (!response.ok) {
         const error =
           await response
             .json()
-            .catch(() => null);
+            .catch(
+              () => null
+            );
+
 
         throw new Error(
           error?.detail ??
-            "Failed to create file",
+            "Failed to create file"
         );
       }
 
-      await loadFiles(labId);
 
-      await openFile(path);
+      await loadFiles(
+        labId
+      );
+
+
+      await openFile(
+        path
+      );
+
     } catch (error) {
       console.error(error);
 
       alert(
         error instanceof Error
           ? error.message
-          : "Failed to create file",
+          : "Failed to create file"
       );
     }
   }
@@ -313,43 +589,57 @@ function App() {
    */
 
   async function openFile(
-    path: string,
+    path: string
   ) {
     if (!labId) {
       return;
     }
 
-    setLoadingFile(true);
+
+    setLoadingFile(
+      true
+    );
+
 
     try {
       const response =
         await fetch(
           `${API_URL}/labs/${labId}/files/${encodeURIComponent(
-            path,
-          )}`,
+            path
+          )}`
         );
+
 
       if (!response.ok) {
         throw new Error(
-          "Failed to load file",
+          "Failed to load file"
         );
       }
+
 
       const data =
         await response.json();
 
-      setSelectedFile(path);
-      setFileContent(
-        data.content,
+
+      setSelectedFile(
+        path
       );
+
+      setFileContent(
+        data.content
+      );
+
     } catch (error) {
       console.error(error);
 
       alert(
-        "Failed to load file",
+        "Failed to load file"
       );
+
     } finally {
-      setLoadingFile(false);
+      setLoadingFile(
+        false
+      );
     }
   }
 
@@ -369,44 +659,67 @@ function App() {
       return false;
     }
 
-    setSavingFile(true);
+
+    setSavingFile(
+      true
+    );
+
 
     try {
       const response =
         await fetch(
           `${API_URL}/labs/${labId}/files/${encodeURIComponent(
-            selectedFile,
+            selectedFile
           )}`,
           {
             method: "PUT",
+
             headers: {
               "Content-Type":
                 "application/json",
             },
+
             body: JSON.stringify({
               content:
                 fileContent,
             }),
-          },
+          }
         );
+
 
       if (!response.ok) {
         throw new Error(
-          "Failed to save file",
+          "Failed to save file"
         );
       }
 
+
+      /*
+       * Saving is also meaningful
+       * lab activity.
+       */
+
+      void reportLabActivity(
+        labId
+      );
+
+
       return true;
+
     } catch (error) {
       console.error(error);
 
       alert(
-        "Failed to save file",
+        "Failed to save file"
       );
 
+
       return false;
+
     } finally {
-      setSavingFile(false);
+      setSavingFile(
+        false
+      );
     }
   }
 
@@ -416,42 +729,50 @@ function App() {
    */
 
   async function renameFile(
-    oldPath: string,
+    oldPath: string
   ) {
     if (!labId) {
       return;
     }
 
+
     const currentName =
       oldPath.split("/").pop() ??
       oldPath;
 
+
     const newName =
       window.prompt(
         "Enter new file name:",
-        currentName,
+        currentName
       );
+
 
     if (newName === null) {
       return;
     }
 
+
     const trimmedName =
       newName.trim();
 
+
     if (!trimmedName) {
       alert(
-        "File name cannot be empty.",
+        "File name cannot be empty."
       );
 
       return;
     }
 
+
     if (
-      trimmedName === currentName
+      trimmedName ===
+      currentName
     ) {
       return;
     }
+
 
     /*
      * Preserve the directory if
@@ -461,13 +782,15 @@ function App() {
     const lastSlash =
       oldPath.lastIndexOf("/");
 
+
     const newPath =
       lastSlash === -1
         ? trimmedName
         : `${oldPath.slice(
             0,
-            lastSlash + 1,
+            lastSlash + 1
           )}${trimmedName}`;
+
 
     try {
       const response =
@@ -475,30 +798,43 @@ function App() {
           `${API_URL}/labs/${labId}/files/rename`,
           {
             method: "POST",
+
             headers: {
               "Content-Type":
                 "application/json",
             },
+
             body: JSON.stringify({
-              old_path: oldPath,
-              new_path: newPath,
+              old_path:
+                oldPath,
+
+              new_path:
+                newPath,
             }),
-          },
+          }
         );
+
 
       if (!response.ok) {
         const error =
           await response
             .json()
-            .catch(() => null);
+            .catch(
+              () => null
+            );
+
 
         throw new Error(
           error?.detail ??
-            "Failed to rename file",
+            "Failed to rename file"
         );
       }
 
-      await loadFiles(labId);
+
+      await loadFiles(
+        labId
+      );
+
 
       /*
        * If the renamed file is open,
@@ -506,19 +842,21 @@ function App() {
        */
 
       if (
-        selectedFile === oldPath
+        selectedFile ===
+        oldPath
       ) {
         setSelectedFile(
-          newPath,
+          newPath
         );
       }
+
     } catch (error) {
       console.error(error);
 
       alert(
         error instanceof Error
           ? error.message
-          : "Failed to rename file",
+          : "Failed to rename file"
       );
     }
   }
@@ -529,43 +867,51 @@ function App() {
    */
 
   async function deleteFile(
-    path: string,
+    path: string
   ) {
     if (!labId) {
       return;
     }
 
+
     const confirmed =
       window.confirm(
-        `Delete "${path}"?\n\nThis cannot be undone.`,
+        `Delete "${path}"?\n\nThis cannot be undone.`
       );
+
 
     if (!confirmed) {
       return;
     }
 
+
     try {
       const response =
         await fetch(
           `${API_URL}/labs/${labId}/files/${encodeURIComponent(
-            path,
+            path
           )}`,
           {
             method: "DELETE",
-          },
+          }
         );
+
 
       if (!response.ok) {
         const error =
           await response
             .json()
-            .catch(() => null);
+            .catch(
+              () => null
+            );
+
 
         throw new Error(
           error?.detail ??
-            "Failed to delete file",
+            "Failed to delete file"
         );
       }
+
 
       /*
        * If the deleted file is open,
@@ -573,20 +919,30 @@ function App() {
        */
 
       if (
-        selectedFile === path
+        selectedFile ===
+        path
       ) {
-        setSelectedFile(null);
-        setFileContent("");
+        setSelectedFile(
+          null
+        );
+
+        setFileContent(
+          ""
+        );
       }
 
-      await loadFiles(labId);
+
+      await loadFiles(
+        labId
+      );
+
     } catch (error) {
       console.error(error);
 
       alert(
         error instanceof Error
           ? error.message
-          : "Failed to delete file",
+          : "Failed to delete file"
       );
     }
   }
@@ -604,6 +960,7 @@ function App() {
       return;
     }
 
+
     /*
      * Always save the latest editor
      * contents before running.
@@ -612,22 +969,26 @@ function App() {
     const saved =
       await saveFile();
 
+
     if (!saved) {
       return;
     }
 
+
     const started =
       terminalRef.current.runFile(
-        selectedFile,
+        selectedFile
       );
+
 
     if (!started) {
       alert(
-        "Terminal is not connected. Please wait a moment and try again.",
+        "Terminal is not connected. Please wait a moment and try again."
       );
 
       return;
     }
+
 
     /*
      * The backend will send
@@ -635,7 +996,9 @@ function App() {
      * actually finishes.
      */
 
-    setRunning(true);
+    setRunning(
+      true
+    );
   }
 
 
@@ -648,16 +1011,19 @@ function App() {
       return;
     }
 
+
     const stopped =
       terminalRef.current.stopProcess();
 
+
     if (!stopped) {
       alert(
-        "Terminal is not connected.",
+        "Terminal is not connected."
       );
 
       return;
     }
+
 
     /*
      * The stop command was successfully
@@ -666,7 +1032,9 @@ function App() {
      * Return the UI to the Run state.
      */
 
-    setRunning(false);
+    setRunning(
+      false
+    );
   }
 
 
@@ -684,9 +1052,11 @@ function App() {
   const handleProcessExit =
     useCallback(
       (_exitCode: number) => {
-        setRunning(false);
+        setRunning(
+          false
+        );
       },
-      [],
+      []
     );
 
 
@@ -696,6 +1066,7 @@ function App() {
       <header className="header">
 
         <div>
+
           <h1>
             WiByte Labs
           </h1>
@@ -704,15 +1075,19 @@ function App() {
             Backend status:{" "}
             {backendStatus}
           </p>
+
         </div>
 
 
         {!labId && (
           <button
-            onClick={createLab}
+            onClick={
+              createLab
+            }
             disabled={
               creatingLab ||
-              backendStatus !== "ok"
+              backendStatus !==
+                "ok"
             }
           >
             {creatingLab
@@ -724,7 +1099,9 @@ function App() {
 
         {labId && (
           <button
-            onClick={deleteLab}
+            onClick={
+              deleteLab
+            }
           >
             Close Lab
           </button>
@@ -745,9 +1122,12 @@ function App() {
                 FILES
               </span>
 
+
               <button
                 className="new-file-button"
-                onClick={createFile}
+                onClick={
+                  createFile
+                }
                 title="New File"
               >
                 +
@@ -770,13 +1150,15 @@ function App() {
                   .filter(
                     (file) =>
                       file.type ===
-                      "file",
+                      "file"
                   )
                   .map(
                     (file) => (
 
                       <div
-                        key={file.name}
+                        key={
+                          file.name
+                        }
                         className={
                           selectedFile ===
                           file.name
@@ -789,7 +1171,7 @@ function App() {
                           className="file-item"
                           onClick={() =>
                             openFile(
-                              file.name,
+                              file.name
                             )
                           }
                           title={
@@ -799,7 +1181,9 @@ function App() {
 
                           <span className="file-name">
                             📄{" "}
-                            {file.name}
+                            {
+                              file.name
+                            }
                           </span>
 
                         </button>
@@ -811,7 +1195,7 @@ function App() {
                             className="file-action-button"
                             onClick={() =>
                               renameFile(
-                                file.name,
+                                file.name
                               )
                             }
                             title="Rename"
@@ -824,7 +1208,7 @@ function App() {
                             className="file-action-button delete"
                             onClick={() =>
                               deleteFile(
-                                file.name,
+                                file.name
                               )
                             }
                             title="Delete"
@@ -836,7 +1220,7 @@ function App() {
 
                       </div>
 
-                    ),
+                    )
                   )}
 
               </div>
@@ -924,8 +1308,13 @@ function App() {
                     value={
                       fileContent
                     }
+
                     onChange={
                       setFileContent
+                    }
+
+                    onActivity={
+                      handleEditorActivity
                     }
                   />
 
@@ -954,7 +1343,11 @@ function App() {
                 ref={
                   terminalRef
                 }
-                labId={labId}
+
+                labId={
+                  labId
+                }
+
                 onProcessExit={
                   handleProcessExit
                 }

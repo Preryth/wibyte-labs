@@ -6,7 +6,12 @@ from sqlalchemy import pool
 from alembic import context
 
 from backend.app.db.base import Base
-from backend.app.models import Lab, Student
+from backend.app.models import (
+    Lab,
+    Student,
+    GitHubConnection,
+    GitHubRepository,
+)
 
 
 # Alembic Config object.
@@ -28,7 +33,9 @@ target_metadata = Base.metadata
 def run_migrations_offline() -> None:
     """Run migrations in offline mode."""
 
-    url = config.get_main_option("sqlalchemy.url")
+    url = config.get_main_option(
+        "sqlalchemy.url"
+    )
 
     context.configure(
         url=url,

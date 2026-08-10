@@ -7,8 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.app.db.base import Base
 
 
-class Lab(Base):
-    __tablename__ = "labs"
+class GitHubRepository(Base):
+    __tablename__ = "github_repositories"
 
     id: Mapped[str] = mapped_column(
         String(36),
@@ -23,22 +23,30 @@ class Lab(Base):
         index=True,
     )
 
-    github_repository_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("github_repositories.id"),
-        nullable=True,
-        index=True,
-    )
-
-    container_id: Mapped[str] = mapped_column(
-        String(128),
+    github_repo_id: Mapped[str] = mapped_column(
+        String(64),
         nullable=False,
     )
 
-    status: Mapped[str] = mapped_column(
-        String(32),
+    owner: Mapped[str] = mapped_column(
+        String(255),
         nullable=False,
-        default="running",
+    )
+
+    name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    full_name: Mapped[str] = mapped_column(
+        String(511),
+        nullable=False,
+    )
+
+    default_branch: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="main",
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -47,18 +55,14 @@ class Lab(Base):
         nullable=False,
     )
 
-    last_activity_at: Mapped[datetime] = mapped_column(
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
 
     student = relationship(
         "Student",
-        backref="labs",
-    )
-
-    github_repository = relationship(
-        "GitHubRepository",
-        backref="labs",
+        backref="github_repositories",
     )

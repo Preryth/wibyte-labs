@@ -1,16 +1,27 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 
 from backend.app.db.database import SessionLocal
 from backend.app.models.lab import LabSession
 from backend.app.models.lab_db import Lab
 from backend.app.models.student import Student
+from backend.app.models.github_repository import (
+    GitHubRepository,
+)
 
 
 class LabService:
     def __init__(self):
         self.SessionLocal = SessionLocal
 
-    def get_or_create_development_student(self) -> Student:
+    # =========================================================
+    # Development student
+    # =========================================================
+
+    def get_or_create_development_student(
+        self,
+    ) -> Student:
         """
         Temporary development-only student.
 
@@ -21,10 +32,14 @@ class LabService:
         db = self.SessionLocal()
 
         try:
-            student = db.execute(
-                select(Student)
-                .order_by(Student.created_at)
-            ).scalars().first()
+            student = (
+                db.execute(
+                    select(Student)
+                    .order_by(Student.created_at)
+                )
+                .scalars()
+                .first()
+            )
 
             if student is not None:
                 return student
@@ -40,18 +55,49 @@ class LabService:
         finally:
             db.close()
 
+    # =========================================================
+    # Lab creation
+    # =========================================================
+
     def add(
         self,
         session: LabSession,
         student_id: str,
+        github_repository_id: str | None = None,
     ):
         """
-        Persist a lab session in the database.
+        Persist a newly created lab session.
+
+        The Docker container should already exist when this
+        method is called.
+
+        If a GitHub repository is supplied, verify that the
+        repository belongs to the same student before linking
+        it to the lab.
         """
 
         db = self.SessionLocal()
 
         try:
+            repository = None
+
+            if github_repository_id is not None:
+                repository = db.get(
+                    GitHubRepository,
+                    github_repository_id,
+                )
+
+                if repository is None:
+                    raise ValueError(
+                        "GitHub repository not found."
+                    )
+
+                if repository.student_id != student_id:
+                    raise ValueError(
+                        "GitHub repository does not belong "
+                        "to this student."
+                    )
+
             lab = Lab(
                 id=session.id,
                 student_id=student_id,
@@ -59,6 +105,11 @@ class LabService:
                 status=session.status,
                 created_at=session.created_at,
                 last_activity_at=session.created_at,
+                github_repository_id=(
+                    repository.id
+                    if repository is not None
+                    else None
+                ),
             )
 
             db.add(lab)
@@ -70,20 +121,30 @@ class LabService:
         finally:
             db.close()
 
+    # =========================================================
+    # Lab retrieval
+    # =========================================================
+
     def get(
         self,
         lab_id: str,
     ) -> LabSession | None:
         """
-        Retrieve a lab from the database and convert it
-        to the LabSession object currently used by the
-        terminal and workspace systems.
+        Retrieve a persisted lab and convert it to the
+        LabSession object currently used by the terminal
+        and workspace systems.
+
+        GitHub repository information remains persisted on
+        the database Lab record.
         """
 
         db = self.SessionLocal()
 
         try:
-            lab = db.get(Lab, lab_id)
+            lab = db.get(
+                Lab,
+                lab_id,
+            )
 
             if lab is None:
                 return None
@@ -98,18 +159,32 @@ class LabService:
         finally:
             db.close()
 
+    # =========================================================
+    # Lab removal
+    # =========================================================
+
     def remove(
         self,
         lab_id: str,
     ):
         """
-        Remove the lab record from the database.
+        Remove a lab record from the database.
+
+        This removes only the lab session.
+
+        It does NOT remove:
+        - the student
+        - the GitHub connection
+        - the GitHub repository
         """
 
         db = self.SessionLocal()
 
         try:
-            lab = db.get(Lab, lab_id)
+            lab = db.get(
+                Lab,
+                lab_id,
+            )
 
             if lab is None:
                 return None
@@ -121,6 +196,10 @@ class LabService:
 
         finally:
             db.close()
+
+    # =========================================================
+    # Lab status
+    # =========================================================
 
     def update_status(
         self,
@@ -134,7 +213,10 @@ class LabService:
         db = self.SessionLocal()
 
         try:
-            lab = db.get(Lab, lab_id)
+            lab = db.get(
+                Lab,
+                lab_id,
+            )
 
             if lab is None:
                 return False
@@ -148,6 +230,10 @@ class LabService:
         finally:
             db.close()
 
+    # =========================================================
+    # Lab activity
+    # =========================================================
+
     def update_activity(
         self,
         lab_id: str,
@@ -155,16 +241,16 @@ class LabService:
         """
         Update the lab's last activity timestamp.
 
-        This will later be used by the 30-minute
-        inactivity system.
+        This is used by the inactivity system.
         """
-
-        from datetime import datetime, timezone
 
         db = self.SessionLocal()
 
         try:
-            lab = db.get(Lab, lab_id)
+            lab = db.get(
+                Lab,
+                lab_id,
+            )
 
             if lab is None:
                 return False
