@@ -21,6 +21,9 @@ from backend.app.routes.workspace import (
 from backend.app.routes.github import (
     router as github_router,
 )
+from backend.app.routes.student import (
+    router as student_router,
+)
 
 from backend.app.services.lab_service import (
     lab_service,
@@ -172,6 +175,9 @@ app.include_router(
 
 app.include_router(
     github_router
+)
+app.include_router(
+    student_router
 )
 
 

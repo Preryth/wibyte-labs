@@ -24,6 +24,10 @@ GITHUB_CALLBACK_URL = (
     "http://127.0.0.1:8000/github/callback"
 )
 
+GITHUB_FRONTEND_URL = (
+    "http://localhost:5173"
+)
+
 
 # =========================================================
 # Start GitHub OAuth
@@ -45,6 +49,23 @@ def github_connect():
         lab_service
         .get_or_create_development_student()
     )
+
+    # Only one GitHub connection may be active for a student.
+    # The frontend also disables the button, but the backend
+    # must enforce the rule independently.
+    existing_connection = github_service.get_connection(
+        student.id
+    )
+
+    if existing_connection is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A GitHub connection is already active. "
+                "Delete the current connection before "
+                "connecting another GitHub account."
+            ),
+        )
 
     try:
         authorization_url = (
@@ -141,6 +162,23 @@ def github_callback(
             detail=str(exc),
         )
 
+    # OAuth may have been started before another connection
+    # was created. Re-check here so the callback cannot
+    # silently replace an existing active connection.
+    existing_connection = github_service.get_connection(
+        student_id
+    )
+
+    if existing_connection is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A GitHub connection is already active. "
+                "Delete the current connection before "
+                "connecting another GitHub account."
+            ),
+        )
+
     try:
         connection = (
             github_service
@@ -159,19 +197,13 @@ def github_callback(
             ),
         )
 
-    return {
-        "status": "connected",
-        "student_id": connection.student_id,
-        "github_user_id": (
-            connection.github_user_id
+    return RedirectResponse(
+        url=(
+            f"{GITHUB_FRONTEND_URL}"
+            "?github=connected"
         ),
-        "github_username": (
-            connection.github_username
-        ),
-        "connected_at": (
-            connection.connected_at
-        ),
-    }
+        status_code=302,
+    )
 
 
 # =========================================================
@@ -222,6 +254,41 @@ def github_status():
         "refresh_token_expires_at": (
             connection.refresh_token_expires_at
         ),
+    }
+
+
+# =========================================================
+# Delete GitHub connection
+# =========================================================
+
+@router.delete("/connection")
+def github_disconnect():
+    """
+    Delete the student's active GitHub connection.
+
+    This removes WPL's locally stored OAuth credentials.
+    It does not delete the student's GitHub repositories
+    or existing Lab records.
+    """
+
+    student = (
+        lab_service
+        .get_or_create_development_student()
+    )
+
+    deleted = github_service.delete_connection(
+        student.id
+    )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="No GitHub connection is currently active.",
+        )
+
+    return {
+        "status": "disconnected",
+        "student_id": student.id,
     }
 
 

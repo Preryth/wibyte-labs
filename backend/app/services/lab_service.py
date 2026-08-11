@@ -267,4 +267,32 @@ class LabService:
             db.close()
 
 
+    # =========================================================
+    # Student profile
+    # =========================================================
+
+    def update_student_profile(
+        self,
+        student_id: str,
+        name: str | None,
+        email: str | None,
+    ) -> Student | None:
+        db = self.SessionLocal()
+
+        try:
+            student = db.get(Student, student_id)
+            if student is None:
+                return None
+
+            student.name = name
+            student.email = email
+            student.updated_at = datetime.now(timezone.utc)
+
+            db.commit()
+            db.refresh(student)
+            return student
+        finally:
+            db.close()
+
+
 lab_service = LabService()

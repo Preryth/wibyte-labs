@@ -1,0 +1,269 @@
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.settings-panel {
+  width: min(680px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: #111318;
+  color: #f4f4f5;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.settings-header p {
+  margin: 6px 0 0;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.settings-close-button {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #a1a1aa;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.settings-close-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.settings-content {
+  padding: 24px;
+}
+
+.settings-section + .settings-section {
+  margin-top: 28px;
+}
+
+.settings-section-title {
+  margin-bottom: 16px;
+  color: #d4d4d8;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-field {
+  display: block;
+  margin-bottom: 14px;
+}
+
+.settings-field span {
+  display: block;
+  margin-bottom: 7px;
+  color: #a1a1aa;
+  font-size: 13px;
+}
+
+.settings-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #30343d;
+  border-radius: 7px;
+  outline: none;
+  background: #0b0d10;
+  color: #f4f4f5;
+  font: inherit;
+}
+
+.settings-field input:focus {
+  border-color: #6366f1;
+}
+
+.settings-field input[readonly] {
+  color: #a1a1aa;
+  cursor: default;
+}
+
+.settings-field input:not([readonly]) {
+  color: #f4f4f5;
+}
+
+.settings-save-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.settings-primary-button,
+.settings-secondary-button,
+.settings-danger-button {
+  border-radius: 7px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.settings-primary-button {
+  border: 1px solid #3f4652;
+  background: #f4f4f5;
+  color: #111318;
+}
+
+.settings-secondary-button {
+  border: 1px solid #3f4652;
+  background: #1b1e24;
+  color: #f4f4f5;
+}
+
+.settings-danger-button {
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  background: rgba(127, 29, 29, 0.22);
+  color: #fca5a5;
+}
+
+.settings-primary-button:hover:not(:disabled) {
+  background: #ffffff;
+}
+
+.settings-secondary-button:hover:not(:disabled) {
+  background: #252932;
+}
+
+.settings-danger-button:hover:not(:disabled) {
+  background: rgba(127, 29, 29, 0.38);
+}
+
+.settings-primary-button:disabled,
+.settings-secondary-button:disabled,
+.settings-danger-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.settings-saved {
+  color: #86efac;
+  font-size: 13px;
+}
+
+.settings-error {
+  margin-bottom: 18px;
+  padding: 10px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: 7px;
+  background: rgba(127, 29, 29, 0.22);
+  color: #fca5a5;
+  font-size: 13px;
+}
+
+.settings-message {
+  padding: 32px 24px;
+  color: #a1a1aa;
+}
+
+.github-connected-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.github-status-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px;
+  border: 1px solid #292d35;
+  border-radius: 9px;
+  background: #0c0e12;
+}
+
+.github-disconnected-card {
+  align-items: center;
+}
+
+.github-status-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+
+.github-username {
+  margin-top: 5px;
+  color: #d4d4d8;
+  font-size: 13px;
+}
+
+.github-note {
+  margin-top: 6px;
+  max-width: 430px;
+  color: #71717a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.github-add-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 16px;
+  border: 1px solid #292d35;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.github-add-title {
+  color: #d4d4d8;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 600px) {
+  .settings-overlay {
+    padding: 12px;
+  }
+
+  .settings-panel {
+    max-height: calc(100vh - 24px);
+  }
+
+  .github-status-card,
+  .github-add-section,
+  .github-disconnected-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

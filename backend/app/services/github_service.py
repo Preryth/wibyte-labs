@@ -162,6 +162,7 @@ class GitHubService:
             "client_id": self._client_id(),
             "redirect_uri": redirect_uri,
             "state": state,
+            "prompt":"select_account",
         }
 
         return (

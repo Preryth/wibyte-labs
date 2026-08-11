@@ -10,6 +10,7 @@ import Terminal, {
 } from "./Terminal";
 
 import CodeEditor from "./CodeEditor";
+import SettingsPanel from "./SettingsPanel";
 
 import "./App.css";
 
@@ -44,6 +45,11 @@ function App() {
   const [
     creatingLab,
     setCreatingLab,
+  ] = useState(false);
+
+  const [
+    settingsOpen,
+    setSettingsOpen,
   ] = useState(false);
 
 
@@ -292,6 +298,36 @@ function App() {
   /*
    * Backend health check
    */
+
+  /*
+   * Open Settings after returning from GitHub OAuth.
+   *
+   * The backend redirects back to:
+   *   /?github=connected
+   *
+   * The settings panel then reloads the current connection
+   * state from /student/settings.
+   */
+  useEffect(() => {
+    const params = new URLSearchParams(
+      window.location.search
+    );
+
+    const githubResult =
+      params.get("github");
+
+    if (
+      githubResult === "connected"
+    ) {
+      setSettingsOpen(true);
+
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname
+      );
+    }
+  }, []);
 
   useEffect(() => {
     fetch(`${API_URL}/health`)
@@ -1107,6 +1143,13 @@ function App() {
           </button>
         )}
 
+        <button
+          onClick={() => setSettingsOpen(true)}
+          type="button"
+        >
+          Settings
+        </button>
+
       </header>
 
 
@@ -1373,6 +1416,13 @@ function App() {
 
         </section>
 
+      )}
+
+      {settingsOpen && (
+        <SettingsPanel
+          apiUrl={API_URL}
+          onClose={() => setSettingsOpen(false)}
+        />
       )}
 
     </main>
