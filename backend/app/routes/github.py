@@ -368,3 +368,54 @@ def github_repositories(
             status_code=502,
             detail=str(exc),
         )
+
+# =========================================================
+# Repository contents browsing
+# =========================================================
+
+@router.get("/repositories/{repository_id}/contents")
+def github_repository_contents(
+    repository_id: str,
+    path: str = Query(default=""),
+):
+    """
+    Browse one directory of a student's GitHub repository.
+
+    This is read-only. Editing happens in the Docker workspace
+    after the repository has been opened in a Lab.
+    """
+    student = (
+        lab_service
+        .get_or_create_development_student()
+    )
+
+    try:
+        contents = github_service.fetch_repository_contents(
+            student_id=student.id,
+            repository_id=repository_id,
+            path=path,
+        )
+
+        return {
+            "repository_id": repository_id,
+            "path": path,
+            "contents": contents,
+        }
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail="Repository path not found.",
+        )
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=str(exc),
+        )

@@ -7,7 +7,7 @@ import tarfile
 import tempfile
 
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from uuid import uuid4
 
 import httpx
@@ -1152,6 +1152,88 @@ class GitHubService:
             # The TemporaryDirectory context removes the cloned repository
             # and any temporary Git metadata/credential material.
             pass
+
+    def fetch_repository_contents(
+        self,
+        student_id: str,
+        repository_id: str,
+        path: str = "",
+    ) -> list[dict]:
+        """
+        Return the contents of a GitHub repository directory.
+
+        This is read-only repository browsing for the Lab file
+        explorer. It does not copy files into the Docker workspace.
+        """
+        connection = self._get_valid_connection(student_id)
+        repository = self.get_repository(repository_id)
+
+        if repository is None:
+            raise ValueError("GitHub repository not found.")
+
+        if repository.student_id != student_id:
+            raise ValueError(
+                "GitHub repository does not belong to this student."
+            )
+
+        clean_path = path.strip().strip("/")
+        encoded_path = "/".join(
+            quote(part, safe="")
+            for part in clean_path.split("/")
+            if part
+        )
+
+        url = (
+            f"{self.GITHUB_API_BASE_URL}/repos/"
+            f"{repository.owner}/{repository.name}/contents"
+        )
+
+        if encoded_path:
+            url += f"/{encoded_path}"
+
+        headers = self._api_headers(connection.access_token)
+
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(
+                url,
+                headers=headers,
+                params={"ref": repository.default_branch},
+            )
+
+        if response.status_code == 404:
+            raise FileNotFoundError(clean_path or ".")
+
+        if response.status_code == 401:
+            raise RuntimeError("GitHub access token was rejected.")
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                "GitHub repository contents lookup failed: "
+                f"{response.status_code} {response.text[:500]}"
+            )
+
+        data = response.json()
+
+        # GitHub returns an object for a single file and a list for a directory.
+        if isinstance(data, dict):
+            data = [data]
+
+        return [
+            {
+                "name": item.get("name"),
+                "type": (
+                    "directory"
+                    if item.get("type") == "dir"
+                    else "file"
+                ),
+                "path": item.get("path"),
+                "size": item.get("size", 0),
+                "html_url": item.get("html_url"),
+            }
+            for item in data
+            if item.get("type") in {"file", "dir"}
+        ]
+
 
     def delete_repository(
         self,

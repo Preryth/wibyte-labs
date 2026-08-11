@@ -24,6 +24,31 @@ type LabFile = {
   type: "file" | "directory";
 };
 
+type GitHubRepository = {
+  id: string;
+  github_repo_id: string;
+  owner: string;
+  name: string;
+  full_name: string;
+  default_branch: string;
+  private?: boolean;
+  html_url?: string | null;
+  description?: string | null;
+};
+
+type GitHubRepositoryItem = {
+  name: string;
+  type: "file" | "directory";
+  path: string;
+  size?: number;
+  html_url?: string | null;
+};
+
+type GitHubDirectoryState = {
+  loading: boolean;
+  items: GitHubRepositoryItem[];
+  error: string | null;
+};
 
 function App() {
   const [
@@ -52,6 +77,47 @@ function App() {
     setSettingsOpen,
   ] = useState(false);
 
+  const [
+    githubConnected,
+    setGithubConnected,
+  ] = useState(false);
+
+  const [
+    githubUsername,
+    setGithubUsername,
+  ] = useState<string | null>(null);
+
+  const [
+    githubRepositories,
+    setGithubRepositories,
+  ] = useState<GitHubRepository[]>([]);
+
+  const [
+    githubLoading,
+    setGithubLoading,
+  ] = useState(false);
+
+  const [
+    githubError,
+    setGithubError,
+  ] = useState<string | null>(null);
+
+  const [
+    expandedRepositories,
+    setExpandedRepositories,
+  ] = useState<Record<string, boolean>>({});
+
+  const [
+    githubDirectories,
+    setGithubDirectories,
+  ] = useState<
+    Record<string, GitHubDirectoryState>
+  >({});
+
+  const [
+    openingRepositoryId,
+    setOpeningRepositoryId,
+  ] = useState<string | null>(null);
 
   const [
     files,
@@ -308,27 +374,216 @@ function App() {
    * The settings panel then reloads the current connection
    * state from /student/settings.
    */
-  useEffect(() => {
-    const params = new URLSearchParams(
-      window.location.search
-    );
 
-    const githubResult =
-      params.get("github");
 
-    if (
-      githubResult === "connected"
-    ) {
-      setSettingsOpen(true);
+async function loadGitHubDirectory(
+  repositoryId: string,
+  path: string
+) {
+  const key =
+    `${repositoryId}:${path}`;
 
-      window.history.replaceState(
-        {},
-        document.title,
-        window.location.pathname
+  setGithubDirectories(
+    (current) => ({
+      ...current,
+      [key]: {
+        loading: true,
+        items:
+          current[key]?.items ?? [],
+        error: null,
+      },
+    })
+  );
+
+  try {
+    const response =
+      await fetch(
+        `${API_URL}/github/repositories/${encodeURIComponent(
+          repositoryId
+        )}/contents?path=${encodeURIComponent(
+          path
+        )}`
+      );
+
+    if (!response.ok) {
+      const error =
+        await response
+          .json()
+          .catch(() => null);
+
+      throw new Error(
+        error?.detail ??
+          "Failed to load repository contents."
       );
     }
-  }, []);
 
+    const data =
+      await response.json();
+
+    setGithubDirectories(
+      (current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          items: data.contents ?? [],
+          error: null,
+        },
+      })
+    );
+  } catch (error) {
+    console.error(
+      "Failed to load GitHub directory:",
+      error
+    );
+
+    setGithubDirectories(
+      (current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          items: [],
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to load directory.",
+        },
+      })
+    );
+  }
+}
+async function toggleGitHubRepository(
+  repositoryId: string
+) {
+  const isExpanded =
+    expandedRepositories[
+      repositoryId
+    ] ?? false;
+
+  setExpandedRepositories(
+    (current) => ({
+      ...current,
+      [repositoryId]: !isExpanded,
+    })
+  );
+
+  if (isExpanded) {
+    return;
+  }
+
+  await loadGitHubDirectory(
+    repositoryId,
+    ""
+  );
+}
+const [
+  expandedGitHubDirectories,
+  setExpandedGitHubDirectories,
+] = useState<
+  Record<string, boolean>
+>({});
+async function toggleGitHubDirectory(
+  repositoryId: string,
+  path: string
+) {
+  const key =
+    `${repositoryId}:${path}`;
+
+  const isExpanded =
+    expandedGitHubDirectories[key] ??
+    false;
+
+  setExpandedGitHubDirectories(
+    (current) => ({
+      ...current,
+      [key]: !isExpanded,
+    })
+  );
+
+  if (isExpanded) {
+    return;
+  }
+
+  await loadGitHubDirectory(
+    repositoryId,
+    path
+  );
+}
+async function openGitHubRepository(
+  repositoryId: string
+) {
+  if (labId) {
+    alert(
+      "Close the current lab before opening a GitHub repository."
+    );
+
+    return;
+  }
+
+  setOpeningRepositoryId(
+    repositoryId
+  );
+
+  setCreatingLab(true);
+
+  try {
+    const response =
+      await fetch(
+        `${API_URL}/labs?github_repository_id=${encodeURIComponent(
+          repositoryId
+        )}`,
+        {
+          method: "POST",
+        }
+      );
+
+    if (!response.ok) {
+      const error =
+        await response
+          .json()
+          .catch(() => null);
+
+      throw new Error(
+        error?.detail ??
+          "Failed to open GitHub repository."
+      );
+    }
+
+    const data =
+      await response.json();
+
+    setLabId(
+      data.lab_id
+    );
+
+    setFiles([]);
+
+    setSelectedFile(
+      null
+    );
+
+    setFileContent("");
+
+    setRunning(false);
+
+  } catch (error) {
+    console.error(
+      "Failed to open GitHub repository:",
+      error
+    );
+
+    alert(
+      error instanceof Error
+        ? error.message
+        : "Failed to open GitHub repository."
+    );
+  } finally {
+    setOpeningRepositoryId(
+      null
+    );
+
+    setCreatingLab(false);
+  }
+}
   useEffect(() => {
     fetch(`${API_URL}/health`)
       .then((response) => {
@@ -352,6 +607,115 @@ function App() {
       });
   }, []);
 
+/*
+ * -------------------------------------------------------
+ * GitHub status and repository loading
+ * -------------------------------------------------------
+ */
+
+const loadGitHubRepositories = useCallback(
+  async () => {
+    setGithubLoading(true);
+    setGithubError(null);
+
+    try {
+      const statusResponse =
+        await fetch(
+          `${API_URL}/github/status`
+        );
+
+      if (!statusResponse.ok) {
+        throw new Error(
+          "Failed to load GitHub connection status."
+        );
+      }
+
+      const status =
+        await statusResponse.json();
+
+      setGithubConnected(
+        Boolean(status.connected)
+      );
+
+      setGithubUsername(
+        status.github_username ?? null
+      );
+
+      if (!status.connected) {
+        setGithubRepositories([]);
+        return;
+      }
+
+      const repositoriesResponse =
+        await fetch(
+          `${API_URL}/github/repositories`
+        );
+
+      if (!repositoriesResponse.ok) {
+        const error =
+          await repositoriesResponse
+            .json()
+            .catch(() => null);
+
+        throw new Error(
+          error?.detail ??
+            "Failed to load GitHub repositories."
+        );
+      }
+
+      const data =
+        await repositoriesResponse.json();
+
+      setGithubRepositories(
+        data.repositories ?? []
+      );
+    } catch (error) {
+      console.error(
+        "Failed to load GitHub data:",
+        error
+      );
+
+      setGithubError(
+        error instanceof Error
+          ? error.message
+          : "Failed to load GitHub data."
+      );
+    } finally {
+      setGithubLoading(false);
+    }
+  },
+  []
+);
+
+useEffect(() => {
+  void loadGitHubRepositories();
+}, [
+  loadGitHubRepositories,
+]);
+  useEffect(() => {
+    const params = new URLSearchParams(
+      window.location.search
+    );
+
+    const githubResult =
+      params.get("github");
+
+    if (
+  githubResult === "connected"
+) {
+  setSettingsOpen(true);
+
+  void loadGitHubRepositories();
+
+  window.history.replaceState(
+    {},
+    document.title,
+    window.location.pathname
+  );
+}
+}, [
+  loadGitHubRepositories,
+]);
 
   /*
    * Create lab
@@ -1154,278 +1518,545 @@ function App() {
 
 
       {labId ? (
+  <section className="workspace">
+    <aside className="file-explorer">
+      {/* =====================================================
+          GITHUB
+          ===================================================== */}
+      <section className="explorer-section github-section">
+        <div className="file-panel-header">
+          <span>
+            GITHUB
+          </span>
 
-        <section className="workspace">
+          <div className="explorer-header-actions">
+            <button
+              className="small-action-button"
+              onClick={() =>
+                void loadGitHubRepositories()
+              }
+              disabled={githubLoading}
+              title="Refresh GitHub"
+              type="button"
+            >
+              ↻
+            </button>
+          </div>
+        </div>
 
-          <aside className="file-explorer">
+        {githubLoading ? (
+          <p className="explorer-message">
+            Loading GitHub...
+          </p>
+        ) : githubError ? (
+          <p className="explorer-error">
+            {githubError}
+          </p>
+        ) : !githubConnected ? (
+          <div className="github-connect-banner">
+            <strong>
+              GitHub isn't connected
+            </strong>
 
-            <div className="file-panel-header">
+            <span>
+              Connect GitHub in Settings to
+              browse your repositories.
+            </span>
 
-              <span>
-                FILES
-              </span>
-
-
-              <button
-                className="new-file-button"
-                onClick={
-                  createFile
-                }
-                title="New File"
-              >
-                +
-              </button>
-
+            <button
+              type="button"
+              onClick={() =>
+                setSettingsOpen(true)
+              }
+            >
+              Connect GitHub
+            </button>
+          </div>
+        ) : (
+          <div className="github-panel-content">
+            <div className="github-account-row">
+              @{githubUsername}
             </div>
 
-
-            {files.length === 0 ? (
-
-              <p className="empty-files">
-                No files
+            {githubRepositories.length === 0 ? (
+              <p className="explorer-message">
+                No repositories found.
               </p>
-
             ) : (
+              githubRepositories.map(
+                (repository) => {
+                  const isExpanded =
+                    expandedRepositories[
+                      repository.id
+                    ] ?? false;
 
-              <div className="file-list">
+                  const rootKey =
+                    `${repository.id}:`;
 
-                {files
-                  .filter(
-                    (file) =>
-                      file.type ===
-                      "file"
-                  )
-                  .map(
-                    (file) => (
+                  const rootDirectory =
+                    githubDirectories[
+                      rootKey
+                    ];
 
-                      <div
-                        key={
-                          file.name
-                        }
-                        className={
-                          selectedFile ===
-                          file.name
-                            ? "file-row selected"
-                            : "file-row"
-                        }
-                      >
-
+                  return (
+                    <div
+                      key={repository.id}
+                      className="github-repository"
+                    >
+                      <div className="github-repository-header">
                         <button
-                          className="file-item"
+                          className="github-repository-toggle"
+                          type="button"
                           onClick={() =>
-                            openFile(
-                              file.name
+                            void toggleGitHubRepository(
+                              repository.id
                             )
                           }
-                          title={
-                            file.name
-                          }
                         >
-
-                          <span className="file-name">
-                            📄{" "}
-                            {
-                              file.name
-                            }
-                          </span>
-
+                          {isExpanded
+                            ? "▼"
+                            : "▶"}{" "}
+                          📁{" "}
+                          {repository.name}
                         </button>
 
-
-                        <div className="file-actions">
-
-                          <button
-                            className="file-action-button"
-                            onClick={() =>
-                              renameFile(
-                                file.name
-                              )
-                            }
-                            title="Rename"
-                          >
-                            ✎
-                          </button>
-
-
-                          <button
-                            className="file-action-button delete"
-                            onClick={() =>
-                              deleteFile(
-                                file.name
-                              )
-                            }
-                            title="Delete"
-                          >
-                            ×
-                          </button>
-
-                        </div>
-
+                        <button
+                          className="repo-open-button"
+                          type="button"
+                          onClick={() =>
+                            void openGitHubRepository(
+                              repository.id
+                            )
+                          }
+                          disabled={
+                            openingRepositoryId ===
+                              repository.id ||
+                            creatingLab ||
+                            Boolean(labId)
+                          }
+                        >
+                          {openingRepositoryId ===
+                          repository.id
+                            ? "Opening..."
+                            : "Open"}
+                        </button>
                       </div>
 
-                    )
-                  )}
+                      {repository.description && (
+                        <div className="github-repository-description">
+                          {repository.description}
+                        </div>
+                      )}
 
-              </div>
-
+                      {isExpanded && (
+                        <div>
+                          {rootDirectory?.loading ? (
+                            <p className="explorer-message">
+                              Loading...
+                            </p>
+                          ) : rootDirectory?.error ? (
+                            <p className="explorer-error">
+                              {rootDirectory.error}
+                            </p>
+                          ) : (
+                            rootDirectory?.items?.map(
+                              (item) => (
+                                item.type ===
+                                "directory" ? (
+                                  <GitHubDirectoryTree
+                                    key={item.path}
+                                    repositoryId={
+                                      repository.id
+                                    }
+                                    item={item}
+                                    githubDirectories={
+                                      githubDirectories
+                                    }
+                                    expandedDirectories={
+                                      expandedGitHubDirectories
+                                    }
+                                    onToggleDirectory={
+                                      toggleGitHubDirectory
+                                    }
+                                  />
+                                ) : (
+                                  <div
+                                    key={item.path}
+                                    className="github-file-row"
+                                  >
+                                    <button
+                                      className="github-file-item"
+                                      type="button"
+                                      title={item.path}
+                                    >
+                                      📄{" "}
+                                      {item.name}
+                                    </button>
+                                  </div>
+                                )
+                              )
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+              )
             )}
+          </div>
+        )}
+      </section>
 
-          </aside>
+      {/* =====================================================
+          WORKSPACE
+          ===================================================== */}
+      <section className="explorer-section workspace-section">
+        <div className="file-panel-header">
+          <span>
+            WORKSPACE
+          </span>
 
+          <button
+            className="new-file-button"
+            onClick={
+              createFile
+            }
+            title="New File"
+            type="button"
+          >
+            +
+          </button>
+        </div>
 
-          <section className="editor-terminal">
-
-            <div className="editor-section">
-
-              <div className="editor-header">
-
-                <span>
-                  {selectedFile ??
-                    "No file selected"}
-                </span>
-
-
-                {selectedFile && (
-
-                  <div className="editor-actions">
-
+        {files.length === 0 ? (
+          <p className="empty-files">
+            No files
+          </p>
+        ) : (
+          <div className="file-list">
+            {files
+              .filter(
+                (file) =>
+                  file.type === "file"
+              )
+              .map(
+                (file) => (
+                  <div
+                    key={file.name}
+                    className={
+                      selectedFile ===
+                      file.name
+                        ? "file-row selected"
+                        : "file-row"
+                    }
+                  >
                     <button
-                      onClick={
-                        saveFile
+                      className="file-item"
+                      onClick={() =>
+                        openFile(
+                          file.name
+                        )
                       }
-                      disabled={
-                        savingFile ||
-                        running
+                      title={
+                        file.name
                       }
+                      type="button"
                     >
-                      {savingFile
-                        ? "Saving..."
-                        : "Save"}
+                      <span className="file-name">
+                        📄{" "}
+                        {file.name}
+                      </span>
                     </button>
 
-
-                    {!running ? (
-
+                    <div className="file-actions">
                       <button
-                        onClick={
-                          runFile
+                        className="file-action-button"
+                        onClick={() =>
+                          renameFile(
+                            file.name
+                          )
                         }
-                        disabled={
-                          savingFile
-                        }
+                        title="Rename"
+                        type="button"
                       >
-                        ▶ Run
+                        ✎
                       </button>
 
-                    ) : (
-
                       <button
-                        onClick={
-                          stopFile
+                        className="file-action-button delete"
+                        onClick={() =>
+                          deleteFile(
+                            file.name
+                          )
                         }
-                        className="stop-button"
+                        title="Delete"
+                        type="button"
                       >
-                        ■ Stop
+                        ×
                       </button>
-
-                    )}
-
+                    </div>
                   </div>
+                )
+              )}
+          </div>
+        )}
+      </section>
+    </aside>
 
-                )}
+    <section className="editor-terminal">
+      <div className="editor-section">
+        <div className="editor-header">
+          <span>
+            {selectedFile ??
+              "No file selected"}
+          </span>
 
-              </div>
+          {selectedFile && (
+            <div className="editor-actions">
+              <button
+                onClick={
+                  saveFile
+                }
+                disabled={
+                  savingFile ||
+                  running
+                }
+              >
+                {savingFile
+                  ? "Saving..."
+                  : "Save"}
+              </button>
+
+              {!running ? (
+                <button
+                  onClick={
+                    runFile
+                  }
+                  disabled={
+                    savingFile
+                  }
+                >
+                  ▶ Run
+                </button>
+              ) : (
+                <button
+                  onClick={
+                    stopFile
+                  }
+                  className="stop-button"
+                >
+                  ■ Stop
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="editor">
+          {loadingFile ? (
+            <div className="editor-message">
+              Loading file...
+            </div>
+          ) : selectedFile ? (
+            <CodeEditor
+              value={
+                fileContent
+              }
+              onChange={
+                setFileContent
+              }
+              onActivity={
+                handleEditorActivity
+              }
+            />
+          ) : (
+            <div className="editor-message">
+              Select a file to start
+              editing.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="terminal-section">
+        <div className="panel-title">
+          TERMINAL
+        </div>
+
+        <Terminal
+          ref={
+            terminalRef
+          }
+          labId={
+            labId
+          }
+          onProcessExit={
+            handleProcessExit
+          }
+        />
+      </div>
+    </section>
+  </section>
+) : (
+  <section className="empty-state">
+    <h2>
+      No active lab
+    </h2>
+
+    <p>
+      Create a lab to start coding.
+    </p>
+  </section>
+)}
+
+{settingsOpen && (
+  <SettingsPanel
+    apiUrl={API_URL}
+    onClose={() =>
+      setSettingsOpen(false)
+    }
+  />
+)}
+
+</main>
+);
+}
+
+function GitHubDirectoryTree({
+  repositoryId,
+  item,
+  githubDirectories,
+  expandedDirectories,
+  onToggleDirectory,
+}: {
+  repositoryId: string;
+  item: GitHubRepositoryItem;
+  githubDirectories: Record<
+    string,
+    GitHubDirectoryState
+  >;
+  expandedDirectories: Record<
+    string,
+    boolean
+  >;
+  onToggleDirectory: (
+    repositoryId: string,
+    path: string
+  ) => void;
+}) {
+  const key =
+    `${repositoryId}:${item.path}`;
+
+  const isExpanded =
+    expandedDirectories[key] ??
+    false;
+
+  const directory =
+    githubDirectories[key];
+
+  return (
+    <div>
+
+      <div className="github-file-row">
+
+        <button
+          className="github-file-item"
+          type="button"
+          onClick={() =>
+            onToggleDirectory(
+              repositoryId,
+              item.path
+            )
+          }
+        >
+          {isExpanded
+            ? "▼"
+            : "▶"}{" "}
+          📁{" "}
+          {item.name}
+        </button>
+
+      </div>
 
 
-              <div className="editor">
+      {isExpanded && (
 
-                {loadingFile ? (
+        <div
+          style={{
+            paddingLeft: "16px",
+          }}
+        >
 
-                  <div className="editor-message">
-                    Loading file...
-                  </div>
+          {directory?.loading ? (
 
-                ) : selectedFile ? (
+            <p className="explorer-message">
+              Loading...
+            </p>
 
-                  <CodeEditor
-                    value={
-                      fileContent
+          ) : directory?.error ? (
+
+            <p className="explorer-error">
+              {directory.error}
+            </p>
+
+          ) : (
+
+            directory?.items?.map(
+              (child) => (
+
+                child.type ===
+                "directory" ? (
+
+                  <GitHubDirectoryTree
+                    key={child.path}
+                    repositoryId={
+                      repositoryId
                     }
-
-                    onChange={
-                      setFileContent
+                    item={child}
+                    githubDirectories={
+                      githubDirectories
                     }
-
-                    onActivity={
-                      handleEditorActivity
+                    expandedDirectories={
+                      expandedDirectories
+                    }
+                    onToggleDirectory={
+                      onToggleDirectory
                     }
                   />
 
                 ) : (
 
-                  <div className="editor-message">
-                    Select a file to start
-                    editing.
+                  <div
+                    key={child.path}
+                    className="github-file-row"
+                  >
+
+                    <button
+                      className="github-file-item"
+                      type="button"
+                      title={
+                        child.path
+                      }
+                    >
+                      📄{" "}
+                      {child.name}
+                    </button>
+
                   </div>
 
-                )}
+                )
 
-              </div>
+              )
+            )
 
-            </div>
+          )}
 
-
-            <div className="terminal-section">
-
-              <div className="panel-title">
-                TERMINAL
-              </div>
-
-
-              <Terminal
-                ref={
-                  terminalRef
-                }
-
-                labId={
-                  labId
-                }
-
-                onProcessExit={
-                  handleProcessExit
-                }
-              />
-
-            </div>
-
-          </section>
-
-        </section>
-
-      ) : (
-
-        <section className="empty-state">
-
-          <h2>
-            No active lab
-          </h2>
-
-          <p>
-            Create a lab to start coding.
-          </p>
-
-        </section>
+        </div>
 
       )}
 
-      {settingsOpen && (
-        <SettingsPanel
-          apiUrl={API_URL}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
-
-    </main>
+    </div>
   );
 }
 
