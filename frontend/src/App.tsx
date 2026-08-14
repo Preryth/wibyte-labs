@@ -50,6 +50,24 @@ type GitHubDirectoryState = {
   error: string | null;
 };
 
+type WorkspaceDirectoryState = {
+  loading: boolean;
+  items: LabFile[];
+  error: string | null;
+};
+
+type GitStatus = {
+  branch: string | null;
+  ahead: number;
+  behind: number;
+  clean: boolean;
+  changes: {
+    index: string;
+    worktree: string;
+    path: string;
+  }[];
+};
+
 function App() {
   const [
     backendStatus,
@@ -70,6 +88,11 @@ function App() {
   const [
     creatingLab,
     setCreatingLab,
+  ] = useState(false);
+
+  const [
+    openingGui,
+    setOpeningGui,
   ] = useState(false);
 
   const [
@@ -118,7 +141,35 @@ function App() {
     openingRepositoryId,
     setOpeningRepositoryId,
   ] = useState<string | null>(null);
+  const [
+    activeGitHubRepositoryId,
+    setActiveGitHubRepositoryId,
+  ] = useState<string | null>(null);
 
+  const [
+    expandedWorkspaceDirectories,
+    setExpandedWorkspaceDirectories,
+  ] = useState<Record<string, boolean>>({});
+
+  const [
+    workspaceDirectories,
+    setWorkspaceDirectories,
+  ] = useState<Record<string, WorkspaceDirectoryState>>({});
+
+  const [
+    gitStatus,
+    setGitStatus,
+  ] = useState<GitStatus | null>(null);
+
+  const [
+    gitDiff,
+    setGitDiff,
+  ] = useState<string | null>(null);
+
+  const [
+    gitLoading,
+    setGitLoading,
+  ] = useState(false);
   const [
     files,
     setFiles,
@@ -518,7 +569,6 @@ async function openGitHubRepository(
 
     return;
   }
-
   setOpeningRepositoryId(
     repositoryId
   );
@@ -554,6 +604,15 @@ async function openGitHubRepository(
     setLabId(
       data.lab_id
     );
+
+    setActiveGitHubRepositoryId(
+      repositoryId
+    );
+
+    setExpandedWorkspaceDirectories({});
+    setWorkspaceDirectories({});
+    setGitStatus(null);
+    setGitDiff(null);
 
     setFiles([]);
 
@@ -749,6 +808,12 @@ useEffect(() => {
         data.lab_id
       );
 
+      setActiveGitHubRepositoryId(null);
+      setExpandedWorkspaceDirectories({});
+      setWorkspaceDirectories({});
+      setGitStatus(null);
+      setGitDiff(null);
+
       setFiles([]);
 
       setSelectedFile(
@@ -821,6 +886,11 @@ useEffect(() => {
 
 
       setLabId(null);
+      setActiveGitHubRepositoryId(null);
+      setExpandedWorkspaceDirectories({});
+      setWorkspaceDirectories({});
+      setGitStatus(null);
+      setGitDiff(null);
 
       setFiles([]);
 
@@ -884,18 +954,401 @@ useEffect(() => {
   /*
    * Load files when lab changes
    */
-
   useEffect(() => {
     if (!labId) {
       return;
     }
 
-
-    loadFiles(
-      labId
-    );
+    void loadFiles(labId);
   }, [labId]);
 
+  useEffect(() => {
+    if (!labId || !activeGitHubRepositoryId) {
+      return;
+    }
+
+    void loadGitStatus();
+  }, [labId, activeGitHubRepositoryId]);
+
+  async function loadWorkspaceDirectory(
+    id: string,
+    path: string
+  ) {
+    const key = path || ".";
+
+    setWorkspaceDirectories((current) => ({
+      ...current,
+      [key]: {
+        loading: true,
+        items: current[key]?.items ?? [],
+        error: null,
+      },
+    }));
+
+    try {
+      const suffix = path
+        ? `?path=${encodeURIComponent(path)}`
+        : "";
+
+      const response = await fetch(
+        `${API_URL}/labs/${id}/files${suffix}`
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(
+          error?.detail ?? "Failed to load directory"
+        );
+      }
+
+      const data = await response.json();
+
+      setWorkspaceDirectories((current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          items: data.files ?? [],
+          error: null,
+        },
+      }));
+    } catch (error) {
+      setWorkspaceDirectories((current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          items: [],
+          error: error instanceof Error
+            ? error.message
+            : "Failed to load directory.",
+        },
+      }));
+    }
+  }
+
+  async function refreshWorkspaceTree() {
+    if (!labId) {
+      return;
+    }
+
+    await loadFiles(labId);
+
+    const expandedPaths = Object.entries(
+      expandedWorkspaceDirectories
+    )
+      .filter(([, expanded]) => expanded)
+      .map(([path]) => path);
+
+    await Promise.all(
+      expandedPaths.map((path) =>
+        loadWorkspaceDirectory(labId, path)
+      )
+    );
+  }
+
+  async function toggleWorkspaceDirectory(
+    path: string
+  ) {
+    if (!labId) {
+      return;
+    }
+
+    const isExpanded =
+      expandedWorkspaceDirectories[path] ?? false;
+
+    setExpandedWorkspaceDirectories((current) => ({
+      ...current,
+      [path]: !isExpanded,
+    }));
+
+    if (!isExpanded) {
+      await loadWorkspaceDirectory(labId, path);
+    }
+  }
+
+  async function createDirectory() {
+    if (!labId) {
+      return;
+    }
+
+    const name = window.prompt(
+      "Enter folder path:"
+    );
+
+    const path = name?.trim();
+
+    if (!path) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_URL}/labs/${labId}/files`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            path,
+            type: "directory",
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(
+          error?.detail ?? "Failed to create folder"
+        );
+      }
+
+      await refreshWorkspaceTree();
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to create folder"
+      );
+    }
+  }
+
+  async function movePath(oldPath: string) {
+    if (!labId) {
+      return;
+    }
+
+    const newPath = window.prompt(
+      "Enter the new path:",
+      oldPath
+    )?.trim();
+
+    if (!newPath || newPath === oldPath) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${API_URL}/labs/${labId}/files/rename`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            old_path: oldPath,
+            new_path: newPath,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(
+          error?.detail ?? "Failed to move path"
+        );
+      }
+
+      if (selectedFile === oldPath) {
+        setSelectedFile(newPath);
+      }
+
+      await refreshWorkspaceTree();
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to move path"
+      );
+    }
+  }
+
+  async function loadGitStatus() {
+    if (!labId || !activeGitHubRepositoryId) {
+      return;
+    }
+
+    setGitLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/github/labs/${labId}/git/status`
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to load Git status");
+      }
+
+      setGitStatus(await response.json());
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to load Git status"
+      );
+    } finally {
+      setGitLoading(false);
+    }
+  }
+
+  async function loadGitDiff() {
+    if (!labId || !activeGitHubRepositoryId) {
+      return;
+    }
+
+    setGitLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/github/labs/${labId}/git/diff`
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to load Git diff");
+      }
+
+      const data = await response.json();
+      setGitDiff(
+        [
+          data.unstaged ? "UNSTAGED\n" + data.unstaged : "",
+          data.staged ? "STAGED\n" + data.staged : "",
+        ].filter(Boolean).join("\n\n") || "No differences."
+      );
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to load Git diff"
+      );
+    } finally {
+      setGitLoading(false);
+    }
+  }
+
+  async function commitGitChanges() {
+    if (!labId || !activeGitHubRepositoryId) {
+      return;
+    }
+
+    const message = window.prompt("Commit message:")?.trim();
+    if (!message) {
+      return;
+    }
+
+    setGitLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/github/labs/${labId}/git/commit`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ message }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to commit changes");
+      }
+
+      const data = await response.json();
+      setGitStatus(data.status ?? null);
+      setGitDiff(null);
+      await refreshWorkspaceTree();
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to commit changes"
+      );
+    } finally {
+      setGitLoading(false);
+    }
+  }
+
+  async function pushGitChanges() {
+    if (!labId || !activeGitHubRepositoryId) {
+      return;
+    }
+
+    setGitLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/github/labs/${labId}/git/push`,
+        { method: "POST" }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to push changes");
+      }
+
+      const data = await response.json();
+      setGitStatus(data.status ?? null);
+      alert(data.output || "Push completed.");
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to push changes"
+      );
+    } finally {
+      setGitLoading(false);
+    }
+  }
+
+  async function pullGitChanges() {
+    if (!labId || !activeGitHubRepositoryId) {
+      return;
+    }
+
+    if (gitStatus && !gitStatus.clean) {
+      const proceed = window.confirm(
+        "The workspace has uncommitted changes. Pull may fail. Continue?"
+      );
+      if (!proceed) {
+        return;
+      }
+    }
+
+    setGitLoading(true);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/github/labs/${labId}/git/pull`,
+        { method: "POST" }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to pull changes");
+      }
+
+      const data = await response.json();
+      setGitStatus(data.status ?? null);
+      setGitDiff(null);
+      await refreshWorkspaceTree();
+
+      if (selectedFile) {
+        await openFile(selectedFile);
+      }
+
+      alert(data.output || "Pull completed.");
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to pull changes"
+      );
+    } finally {
+      setGitLoading(false);
+    }
+  }
 
   /*
    * Create new file
@@ -1050,6 +1503,39 @@ useEffect(() => {
    * Returns true only if the
    * save succeeds.
    */
+
+  /*
+   * Open a GitHub file inside the already-active Lab.
+   *
+   * The repository must already have been opened as
+   * the active Lab. The repository is then available
+   * inside that Lab's workspace, so clicking a file
+   * uses the normal workspace file loader instead of
+   * attempting to create another Lab.
+   */
+  async function openGitHubFile(
+    _repositoryId: string,
+    filePath: string
+  ) {
+    if (!labId) {
+      alert(
+        "Open the GitHub repository as a Lab first."
+      );
+
+      return;
+    }
+
+    if (activeGitHubRepositoryId !== _repositoryId) {
+      alert(
+        "Open this repository as the active Lab before opening its files."
+      );
+
+      return;
+    }
+
+    await openFile(filePath);
+  }
+
 
   async function saveFile(): Promise<boolean> {
     if (
@@ -1344,6 +1830,89 @@ useEffect(() => {
           ? error.message
           : "Failed to delete file"
       );
+    }
+  }
+
+
+  /*
+   * Open GUI desktop
+   */
+
+  async function openGui() {
+    if (!labId) {
+      alert(
+        "Create or open a Lab before opening the GUI."
+      );
+      return;
+    }
+
+    if (openingGui) {
+      return;
+    }
+
+    setOpeningGui(true);
+
+    const guiWindow = window.open(
+      "about:blank",
+      "_blank"
+    );
+
+    try {
+      const startResponse = await fetch(
+        `${API_URL}/labs/${labId}/gui/start`,
+        { method: "POST" }
+      );
+
+      if (!startResponse.ok) {
+        const detail = await startResponse.text();
+        throw new Error(
+          detail || "Failed to start GUI environment."
+        );
+      }
+
+      const connectionResponse = await fetch(
+        `${API_URL}/labs/${labId}/gui/connection`
+      );
+
+      if (!connectionResponse.ok) {
+        const detail = await connectionResponse.text();
+        throw new Error(
+          detail || "Failed to get GUI connection."
+        );
+      }
+
+      const connection = await connectionResponse.json();
+      const url = connection?.url;
+
+      if (typeof url !== "string" || !url) {
+        throw new Error(
+          "GUI connection URL was not returned by the backend."
+        );
+      }
+
+      if (guiWindow) {
+        guiWindow.location.href = url;
+      } else {
+        window.open(
+          url,
+          "_blank",
+          "noopener,noreferrer"
+        );
+      }
+    } catch (error) {
+      if (guiWindow) {
+        guiWindow.close();
+      }
+
+      console.error(error);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Failed to open GUI environment."
+      );
+    } finally {
+      setOpeningGui(false);
     }
   }
 
@@ -1664,19 +2233,22 @@ useEffect(() => {
                                 item.type ===
                                 "directory" ? (
                                   <GitHubDirectoryTree
-                                    key={item.path}
-                                    repositoryId={
-                                      repository.id
-                                    }
-                                    item={item}
-                                    githubDirectories={
-                                      githubDirectories
+                                  key={item.path}
+                                  repositoryId={
+                                    repository.id
+                                  }
+                                  item={item}
+                                  githubDirectories={
+                                    githubDirectories
                                     }
                                     expandedDirectories={
-                                      expandedGitHubDirectories
+                                        expandedGitHubDirectories
                                     }
                                     onToggleDirectory={
-                                      toggleGitHubDirectory
+                                        toggleGitHubDirectory
+                                    }
+                                    onOpenFile={
+                                      openGitHubFile
                                     }
                                   />
                                 ) : (
@@ -1688,9 +2260,15 @@ useEffect(() => {
                                       className="github-file-item"
                                       type="button"
                                       title={item.path}
-                                    >
-                                      📄{" "}
-                                      {item.name}
+                                      onClick={() =>
+                                          void openGitHubFile(
+                                            repository.id,
+                                            item.path
+                                          )
+                                        }
+                                        >
+                                          📄{" "}
+                                          {item.name}
                                     </button>
                                   </div>
                                 )
@@ -1713,95 +2291,140 @@ useEffect(() => {
           ===================================================== */}
       <section className="explorer-section workspace-section">
         <div className="file-panel-header">
-          <span>
-            WORKSPACE
-          </span>
+          <span>WORKSPACE</span>
 
-          <button
-            className="new-file-button"
-            onClick={
-              createFile
-            }
-            title="New File"
-            type="button"
-          >
-            +
-          </button>
+          <div className="explorer-header-actions">
+            <button
+              className="small-action-button"
+              onClick={() => void refreshWorkspaceTree()}
+              title="Refresh workspace"
+              type="button"
+            >
+              ↻
+            </button>
+
+            <button
+              className="small-action-button"
+              onClick={createDirectory}
+              title="New folder"
+              type="button"
+            >
+              📁+
+            </button>
+
+            <button
+              className="new-file-button"
+              onClick={createFile}
+              title="New file"
+              type="button"
+            >
+              +
+            </button>
+          </div>
         </div>
 
         {files.length === 0 ? (
-          <p className="empty-files">
-            No files
-          </p>
+          <p className="empty-files">No files</p>
         ) : (
           <div className="file-list">
-            {files
-              .filter(
-                (file) =>
-                  file.type === "file"
-              )
-              .map(
-                (file) => (
-                  <div
-                    key={file.name}
-                    className={
-                      selectedFile ===
-                      file.name
-                        ? "file-row selected"
-                        : "file-row"
-                    }
-                  >
-                    <button
-                      className="file-item"
-                      onClick={() =>
-                        openFile(
-                          file.name
-                        )
-                      }
-                      title={
-                        file.name
-                      }
-                      type="button"
-                    >
-                      <span className="file-name">
-                        📄{" "}
-                        {file.name}
-                      </span>
-                    </button>
+            {files.map((file) => {
+              const path = file.name;
 
-                    <div className="file-actions">
-                      <button
-                        className="file-action-button"
-                        onClick={() =>
-                          renameFile(
-                            file.name
-                          )
-                        }
-                        title="Rename"
-                        type="button"
-                      >
-                        ✎
-                      </button>
+              if (file.type === "directory") {
+                return (
+                  <WorkspaceDirectoryTree
+                    key={path}
+                    item={file}
+                    path={path}
+                    directories={workspaceDirectories}
+                    expandedDirectories={expandedWorkspaceDirectories}
+                    selectedFile={selectedFile}
+                    onToggleDirectory={toggleWorkspaceDirectory}
+                    onOpenFile={openFile}
+                    onRename={renameFile}
+                    onMove={movePath}
+                    onDelete={deleteFile}
+                  />
+                );
+              }
 
-                      <button
-                        className="file-action-button delete"
-                        onClick={() =>
-                          deleteFile(
-                            file.name
-                          )
-                        }
-                        title="Delete"
-                        type="button"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  </div>
-                )
-              )}
+              return (
+                <WorkspaceFileRow
+                  key={path}
+                  path={path}
+                  name={file.name}
+                  selected={selectedFile === path}
+                  onOpen={openFile}
+                  onRename={renameFile}
+                  onMove={movePath}
+                  onDelete={deleteFile}
+                />
+              );
+            })}
           </div>
         )}
       </section>
+
+      {/* =====================================================
+          GIT
+          ===================================================== */}
+      {activeGitHubRepositoryId && (
+        <section className="explorer-section git-section">
+          <div className="file-panel-header">
+            <span>GIT</span>
+            <button
+              className="small-action-button"
+              onClick={() => void loadGitStatus()}
+              disabled={gitLoading}
+              title="Refresh Git status"
+              type="button"
+            >
+              ↻
+            </button>
+          </div>
+
+          {gitStatus ? (
+            <div className="git-status-summary">
+              <div>Branch: {gitStatus.branch ?? "unknown"}</div>
+              <div>
+                {gitStatus.clean
+                  ? "Working tree clean"
+                  : `${gitStatus.changes.length} change(s)`}
+              </div>
+              {(gitStatus.ahead > 0 || gitStatus.behind > 0) && (
+                <div>
+                  {gitStatus.ahead > 0 ? `↑${gitStatus.ahead} ` : ""}
+                  {gitStatus.behind > 0 ? `↓${gitStatus.behind}` : ""}
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="explorer-message">Loading Git status...</p>
+          )}
+
+          {gitStatus && !gitStatus.clean && (
+            <div className="git-change-list">
+              {gitStatus.changes.map((change) => (
+                <div key={`${change.index}${change.worktree}:${change.path}`}>
+                  <code>{change.index}{change.worktree}</code> {change.path}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="git-actions">
+            <button onClick={() => void loadGitDiff()} disabled={gitLoading} type="button">Diff</button>
+            <button onClick={() => void commitGitChanges()} disabled={gitLoading} type="button">Commit</button>
+            <button onClick={() => void pullGitChanges()} disabled={gitLoading} type="button">Pull</button>
+            <button onClick={() => void pushGitChanges()} disabled={gitLoading} type="button">Push</button>
+          </div>
+
+          {gitDiff !== null && (
+            <pre className="git-diff-output">{gitDiff}</pre>
+          )}
+        </section>
+      )}
+
     </aside>
 
     <section className="editor-terminal">
@@ -1826,6 +2449,20 @@ useEffect(() => {
                 {savingFile
                   ? "Saving..."
                   : "Save"}
+              </button>
+
+              <button
+                onClick={
+                  () => void openGui()
+                }
+                disabled={
+                  openingGui ||
+                  !labId
+                }
+              >
+                {openingGui
+                  ? "Opening GUI..."
+                  : "GUI"}
               </button>
 
               {!running ? (
@@ -1923,12 +2560,200 @@ useEffect(() => {
 );
 }
 
+function WorkspaceFileRow({
+  path,
+  name,
+  selected,
+  onOpen,
+  onRename,
+  onMove,
+  onDelete,
+}: {
+  path: string;
+  name: string;
+  selected: boolean;
+  onOpen: (path: string) => void;
+  onRename: (path: string) => void;
+  onMove: (path: string) => void;
+  onDelete: (path: string) => void;
+}) {
+  return (
+    <div className={`workspace-file-row${selected ? " selected" : ""}`}>
+      <button
+        className="workspace-file-item"
+        type="button"
+        title={path}
+        onClick={() => void onOpen(path)}
+      >
+        <span>📄</span>
+        <span className="workspace-file-name">{name}</span>
+      </button>
+
+      <div className="workspace-item-actions">
+        <button
+          className="small-action-button"
+          type="button"
+          title="Rename file"
+          onClick={() => void onRename(path)}
+        >
+          ✎
+        </button>
+        <button
+          className="small-action-button"
+          type="button"
+          title="Move file"
+          onClick={() => void onMove(path)}
+        >
+          ↗
+        </button>
+        <button
+          className="small-action-button"
+          type="button"
+          title="Delete file"
+          onClick={() => void onDelete(path)}
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+function WorkspaceDirectoryTree({
+  item,
+  path,
+  directories,
+  expandedDirectories,
+  selectedFile,
+  onToggleDirectory,
+  onOpenFile,
+  onRename,
+  onMove,
+  onDelete,
+}: {
+  item: LabFile;
+  path: string;
+  directories: Record<string, WorkspaceDirectoryState>;
+  expandedDirectories: Record<string, boolean>;
+  selectedFile: string | null;
+  onToggleDirectory: (path: string) => void;
+  onOpenFile: (path: string) => void;
+  onRename: (path: string) => void;
+  onMove: (path: string) => void;
+  onDelete: (path: string) => void;
+}) {
+  const isExpanded =
+    expandedDirectories[path] ?? false;
+
+  const directory =
+    directories[path];
+
+  return (
+    <div className="workspace-directory-tree">
+      <div className="workspace-file-row workspace-directory-row">
+        <button
+          className="workspace-file-item"
+          type="button"
+          title={path}
+          onClick={() => void onToggleDirectory(path)}
+        >
+          <span>{isExpanded ? "▼" : "▶"}</span>
+          <span>📁</span>
+          <span className="workspace-file-name">{item.name}</span>
+        </button>
+
+        <div className="workspace-item-actions">
+          <button
+            className="small-action-button"
+            type="button"
+            title="Rename folder"
+            onClick={() => void onRename(path)}
+          >
+            ✎
+          </button>
+          <button
+            className="small-action-button"
+            type="button"
+            title="Move folder"
+            onClick={() => void onMove(path)}
+          >
+            ↗
+          </button>
+          <button
+            className="small-action-button"
+            type="button"
+            title="Delete folder"
+            onClick={() => void onDelete(path)}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+
+      {isExpanded && (
+        <div className="workspace-directory-children">
+          {directory?.loading ? (
+            <p className="explorer-message">
+              Loading...
+            </p>
+          ) : directory?.error ? (
+            <p className="explorer-error">
+              {directory.error}
+            </p>
+          ) : (
+            directory?.items?.map((child) => {
+              const childPath =
+                path === "."
+                  ? child.name
+                  : `${path}/${child.name}`;
+
+              if (child.type === "directory") {
+                return (
+                  <WorkspaceDirectoryTree
+                    key={childPath}
+                    item={child}
+                    path={childPath}
+                    directories={directories}
+                    expandedDirectories={expandedDirectories}
+                    selectedFile={selectedFile}
+                    onToggleDirectory={onToggleDirectory}
+                    onOpenFile={onOpenFile}
+                    onRename={onRename}
+                    onMove={onMove}
+                    onDelete={onDelete}
+                  />
+                );
+              }
+
+              return (
+                <WorkspaceFileRow
+                  key={childPath}
+                  path={childPath}
+                  name={child.name}
+                  selected={selectedFile === childPath}
+                  onOpen={onOpenFile}
+                  onRename={onRename}
+                  onMove={onMove}
+                  onDelete={onDelete}
+                />
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function GitHubDirectoryTree({
   repositoryId,
   item,
   githubDirectories,
   expandedDirectories,
   onToggleDirectory,
+  onOpenFile,
 }: {
   repositoryId: string;
   item: GitHubRepositoryItem;
@@ -1943,6 +2768,10 @@ function GitHubDirectoryTree({
   onToggleDirectory: (
     repositoryId: string,
     path: string
+  ) => void;
+  onOpenFile: (
+    repositoryId: string,
+    filePath: string
   ) => void;
 }) {
   const key =
@@ -2023,6 +2852,9 @@ function GitHubDirectoryTree({
                     onToggleDirectory={
                       onToggleDirectory
                     }
+                    onOpenFile={
+                        onOpenFile
+                    }
                   />
 
                 ) : (
@@ -2033,10 +2865,16 @@ function GitHubDirectoryTree({
                   >
 
                     <button
-                      className="github-file-item"
-                      type="button"
-                      title={
+                    className="github-file-item"
+                    type="button"
+                    title={
                         child.path
+                      }
+                      onClick ={() =>
+                        void onOpenFile(
+                          repositoryId,
+                          child.path
+                        )
                       }
                     >
                       📄{" "}

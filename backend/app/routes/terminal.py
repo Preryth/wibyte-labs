@@ -1,3 +1,4 @@
+import ast
 import asyncio
 import json
 import shlex
@@ -14,6 +15,63 @@ from backend.app.services.lab_service import (
 
 
 router = APIRouter()
+
+
+def file_uses_tkinter(
+    container,
+    path: str,
+) -> bool:
+    """
+    Inspect a Python source file inside the existing Lab container
+    and determine whether it imports tkinter.
+
+    This keeps GUI detection on the backend and avoids sending the
+    editor contents through the terminal protocol again.
+    """
+    safe_path = shlex.quote(path)
+
+    result = container.exec_run(
+        [
+            "bash",
+            "-lc",
+            f"cat -- {safe_path}",
+        ],
+        user="student",
+        workdir="/workspace",
+    )
+
+    if result.exit_code != 0:
+        return False
+
+    source = result.output.decode(
+        "utf-8",
+        errors="replace",
+    )
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(
+                alias.name == "tkinter"
+                or alias.name.startswith("tkinter.")
+                for alias in node.names
+            ):
+                return True
+
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+
+            if (
+                module == "tkinter"
+                or module.startswith("tkinter.")
+            ):
+                return True
+
+    return False
 
 
 @router.websocket(
@@ -156,14 +214,79 @@ async def terminal(
 
                     continue
 
-                safe_path = shlex.quote(
-                    path
+                container = (
+                    terminal_service.docker_client
+                    .containers.get(
+                        session.container_id
+                    )
                 )
 
-                command = (
-                    f"python -u "
-                    f"{safe_path}\r"
+                uses_tkinter = file_uses_tkinter(
+                    container,
+                    path,
                 )
+
+                if uses_tkinter:
+                    gui_service = (
+                        websocket.app.state
+                        .gui_service
+                    )
+
+                    gui_status = gui_service.status(
+                        session.container_id
+                    )
+
+                    if not gui_status["ready"]:
+                        await websocket.send_json(
+                            {
+                                "type": "output",
+                                "data": (
+                                    "\r\n"
+                                    "This program requires the GUI environment.\r\n"
+                                    "Click the GUI button to open the desktop environment,\r\n"
+                                    "then run the program again.\r\n"
+                                ),
+                            }
+                        )
+
+                        await websocket.send_json(
+                            {
+                                "type": "process_exit",
+                                "exit_code": 1,
+                            }
+                        )
+
+                        continue
+
+                    await websocket.send_json(
+                        {
+                            "type": "output",
+                            "data": (
+                                "\r\n"
+                                f"Running {path} in GUI...\r\n"
+                                "Opened in GUI.\r\n"
+                            ),
+                        }
+                    )
+
+                    safe_path = shlex.quote(
+                        path
+                    )
+
+                    command = (
+                        f"DISPLAY={shlex.quote(gui_status['display'])} "
+                        f"python -u {safe_path}\r"
+                    )
+
+                else:
+                    safe_path = shlex.quote(
+                        path
+                    )
+
+                    command = (
+                        f"python -u "
+                        f"{safe_path}\r"
+                    )
 
                 await websocket.send_json(
                     {

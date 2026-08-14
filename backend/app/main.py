@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import docker
 
 from contextlib import asynccontextmanager
@@ -45,6 +45,10 @@ from backend.app.services.github_service import (
     github_service,
 )
 
+from backend.app.services.gui_service import (
+    GuiService,
+)
+
 
 # ---------------------------------------------------------
 # Docker client and services
@@ -61,6 +65,10 @@ terminal_service = TerminalService(
 )
 
 inactivity_service = InactivityService(
+    docker_client
+)
+
+gui_service = GuiService(
     docker_client
 )
 
@@ -156,6 +164,10 @@ app.state.github_service = (
     github_service
 )
 
+app.state.gui_service = (
+    gui_service
+)
+
 
 # ---------------------------------------------------------
 # Routers
@@ -237,6 +249,9 @@ def create_lab(
                 detach=True,
                 tty=True,
                 stdin_open=True,
+                ports={
+                    "6080/tcp": None,
+                },
             )
         )
 
@@ -275,7 +290,6 @@ def create_lab(
             container.remove(
                 force=True
             )
-
         except Exception:
             pass
 
@@ -290,7 +304,6 @@ def create_lab(
             container.remove(
                 force=True
             )
-
         except Exception:
             pass
 
@@ -386,6 +399,218 @@ def create_lab(
 
 
 # ---------------------------------------------------------
+# GUI environment
+# ---------------------------------------------------------
+
+@app.get(
+    "/labs/{lab_id}/gui/status"
+)
+def gui_status(
+    lab_id: str,
+):
+    """
+    Return the GUI-process status for an existing Lab without
+    starting the GUI environment.
+    """
+
+    session = lab_service.get(
+        lab_id
+    )
+
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Lab not found",
+        )
+
+    try:
+        return {
+            "lab_id": lab_id,
+            **gui_service.status(
+                session.container_id
+            ),
+        }
+
+    except docker.errors.NotFound:
+        raise HTTPException(
+            status_code=404,
+            detail="Lab container not found",
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to inspect GUI environment: "
+                f"{exc}"
+            ),
+        )
+
+
+@app.post(
+    "/labs/{lab_id}/gui/start"
+)
+def start_gui(
+    lab_id: str,
+):
+    """
+    Start Xvfb, Fluxbox, x11vnc, and websockify/noVNC inside the
+    existing Lab container.
+
+    This does not create another Lab or another container.
+    Calling it again reuses the existing GUI processes.
+    """
+
+    session = lab_service.get(
+        lab_id
+    )
+
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Lab not found",
+        )
+
+    try:
+        status = gui_service.start(
+            session.container_id
+        )
+
+        return {
+            "lab_id": lab_id,
+            "status": "gui_ready",
+            **status,
+        }
+
+    except docker.errors.NotFound:
+        raise HTTPException(
+            status_code=404,
+            detail="Lab container not found",
+        )
+
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to start GUI environment: "
+                f"{exc}"
+            ),
+        )
+
+
+# ---------------------------------------------------------
+# GUI browser connection
+# ---------------------------------------------------------
+
+@app.get(
+    "/labs/{lab_id}/gui/connection"
+)
+def gui_connection(
+    lab_id: str,
+):
+    """
+    Return the browser URL for this Lab's noVNC server.
+
+    The GUI must already be started. The Lab container exposes only
+    websockify/noVNC on a dynamically assigned host port; x11vnc
+    itself remains localhost-only inside the container.
+    """
+
+    session = lab_service.get(
+        lab_id
+    )
+
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Lab not found",
+        )
+
+    try:
+        status = gui_service.status(
+            session.container_id
+        )
+
+        if not status["ready"]:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "GUI environment is not ready. "
+                    "Start the GUI first."
+                ),
+            )
+
+        container = (
+            docker_client
+            .containers
+            .get(
+                session.container_id
+            )
+        )
+        container.reload()
+
+        port_bindings = (
+            container.attrs
+            .get("NetworkSettings", {})
+            .get("Ports", {})
+        )
+        bindings = port_bindings.get(
+            f"{gui_service.WEB_PORT}/tcp"
+        )
+
+        if not bindings:
+            raise RuntimeError(
+                "GUI web port is not published for this Lab container. "
+                "Create a new Lab after applying the GUI streaming update."
+            )
+
+        host_port = bindings[0].get(
+            "HostPort"
+        )
+
+        if not host_port:
+            raise RuntimeError(
+                "GUI web port does not have a host binding."
+            )
+
+        url = (
+            f"http://127.0.0.1:{host_port}/vnc.html"
+            "?autoconnect=true&resize=scale"
+        )
+
+        return {
+            "lab_id": lab_id,
+            "url": url,
+            "web_port": gui_service.WEB_PORT,
+            "host_port": int(host_port),
+        }
+
+    except docker.errors.NotFound:
+        raise HTTPException(
+            status_code=404,
+            detail="Lab container not found",
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to create GUI browser connection: "
+                f"{exc}"
+            ),
+        )
+
+
+# ---------------------------------------------------------
 # Record lab activity
 # ---------------------------------------------------------
 
@@ -439,6 +664,9 @@ def delete_lab(
         - the student
         - the student's GitHub connection
         - the student's GitHub repositories
+
+    The GUI environment, if started, lives inside the same Docker
+    container and therefore ends automatically with the Lab.
     """
 
     session = lab_service.get(

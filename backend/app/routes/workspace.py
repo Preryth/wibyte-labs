@@ -34,6 +34,7 @@ def list_files(
             detail="Lab not found",
         )
 
+    # main.py injects the shared WorkspaceService instance here.
     workspace_service = router.workspace_service
 
     try:
@@ -283,4 +284,6 @@ def delete_file(
         )
 
 
+# main.py assigns the shared WorkspaceService instance before
+# registering this router with the FastAPI application.
 router.workspace_service = None

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
 
 from backend.app.services.github_service import (
@@ -8,12 +9,25 @@ from backend.app.services.github_service import (
 from backend.app.services.lab_service import (
     lab_service,
 )
+from backend.app.services.git_service import GitService
+
 
 
 router = APIRouter(
     prefix="/github",
     tags=["GitHub"],
 )
+
+
+class GitCommitRequest(BaseModel):
+    message: str
+
+
+def _git_service() -> GitService:
+    service = getattr(router, "git_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="Git service is not initialized.")
+    return service
 
 
 # =========================================================
@@ -419,3 +433,60 @@ def github_repository_contents(
             status_code=502,
             detail=str(exc),
         )
+
+
+# =========================================================
+# Git operations for the active GitHub-backed Lab
+# =========================================================
+
+@router.get("/labs/{lab_id}/git/status")
+def git_status(lab_id: str):
+    try:
+        return _git_service().status(lab_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.get("/labs/{lab_id}/git/diff")
+def git_diff(lab_id: str, path: str | None = Query(default=None)):
+    try:
+        return _git_service().diff(lab_id, path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/labs/{lab_id}/git/commit")
+def git_commit(lab_id: str, request: GitCommitRequest):
+    try:
+        return _git_service().commit(lab_id, request.message)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/labs/{lab_id}/git/push")
+def git_push(lab_id: str):
+    try:
+        return _git_service().push(lab_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/labs/{lab_id}/git/pull")
+def git_pull(lab_id: str):
+    try:
+        return _git_service().pull(lab_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+router.git_service = None
