@@ -23,6 +23,12 @@ class GitCommitRequest(BaseModel):
     message: str
 
 
+class CreateRepositoryRequest(BaseModel):
+    name: str
+    description: str | None = None
+    private: bool = False
+
+
 def _git_service() -> GitService:
     service = getattr(router, "git_service", None)
     if service is None:
@@ -305,6 +311,55 @@ def github_disconnect():
         "student_id": student.id,
     }
 
+
+
+
+@router.post("/repositories")
+def create_github_repository(request: CreateRepositoryRequest):
+    student = lab_service.get_or_create_development_student()
+    try:
+        return github_service.create_repository(
+            student_id=student.id,
+            name=request.name,
+            description=request.description,
+            private=request.private,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/labs/{lab_id}/workspace-repository")
+def ensure_workspace_repository(lab_id: str):
+    """Create or attach the student's permanent wibyte-workspace repository and clone it into this Lab."""
+    student = lab_service.get_or_create_development_student()
+    session = lab_service.get(lab_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
+
+    try:
+        repositories = github_service.fetch_github_repositories(student.id)
+        repository = next((item for item in repositories if item.get("name") == "wibyte-workspace"), None)
+        if repository is None:
+            repository = github_service.create_repository(
+                student_id=student.id,
+                name="wibyte-workspace",
+                description="WiByte Labs persistent workspace",
+                private=True,
+            )
+        repository_id = repository["id"]
+        lab_service.attach_github_repository(lab_id, repository_id)
+        info = github_service.provision_repository(
+            student_id=student.id,
+            repository_id=repository_id,
+            container_id=session.container_id,
+        )
+        return {"lab_id": lab_id, "repository": repository, "provision": info}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
 # =========================================================
 # Repository discovery

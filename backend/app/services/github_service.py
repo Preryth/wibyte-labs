@@ -2,6 +2,7 @@ import io
 import os
 import posixpath
 import shutil
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -162,7 +163,7 @@ class GitHubService:
             "client_id": self._client_id(),
             "redirect_uri": redirect_uri,
             "state": state,
-            "prompt":"select_account",
+            "prompt": "select_account",
         }
 
         return (
@@ -897,7 +898,7 @@ class GitHubService:
         never passed into the Docker container.
 
         The cloned repository, including its .git directory, is then
-        copied into /workspace as a sanitized tar archive. The temporary
+        copied into /workspace/wibyte-workspace as a sanitized tar archive. The temporary
         clone and its credentials are removed when provisioning finishes.
         """
 
@@ -933,6 +934,38 @@ class GitHubService:
                 raise ValueError(
                     "Lab container not found."
                 ) from exc
+
+            # The permanent repository always lives inside its own
+            # directory. The Lab setup creates /workspace/wibyte-workspace
+            # before provisioning, so /workspace itself is expected to be
+            # non-empty. Only the repository directory must be empty before
+            # we copy a fresh clone into it.
+            workspace_root = "/workspace/wibyte-workspace"
+
+            workspace_check = container.exec_run(
+                [
+                    "bash",
+                    "-lc",
+                    (
+                        f"mkdir -p -- {shlex.quote(workspace_root)} "
+                        "&& find "
+                        f"{shlex.quote(workspace_root)} "
+                        "-mindepth 1 -maxdepth 1 -print -quit"
+                    ),
+                ],
+                user="student",
+            )
+
+            if workspace_check.exit_code != 0:
+                raise RuntimeError(
+                    "Failed to inspect the Lab workspace."
+                )
+
+            if workspace_check.output.strip():
+                raise ValueError(
+                    "The Lab repository workspace is not empty. "
+                    "Refusing to replace its files."
+                )
 
             # Create the temporary clone outside the Docker container.
             # The OAuth token is supplied to Git through an in-memory
@@ -1101,8 +1134,15 @@ class GitHubService:
 
                 sanitized.seek(0)
 
+                mkdir_result = container.exec_run(
+                    ["mkdir", "-p", "/workspace/wibyte-workspace"],
+                    user="root",
+                )
+                if mkdir_result.exit_code != 0:
+                    raise RuntimeError("Failed to create the Lab workspace directory.")
+
                 result = container.put_archive(
-                    "/workspace",
+                    "/workspace/wibyte-workspace",
                     sanitized.getvalue(),
                 )
 
@@ -1234,6 +1274,88 @@ class GitHubService:
             if item.get("type") in {"file", "dir"}
         ]
 
+
+
+    def create_repository(
+        self,
+        student_id: str,
+        name: str,
+        description: str | None = None,
+        private: bool = False,
+    ) -> dict:
+        name = name.strip()
+        if not name:
+            raise ValueError("Repository name cannot be empty.")
+        connection = self._get_valid_connection(student_id)
+        payload = {"name": name, "private": bool(private), "auto_init": True}
+        if description and description.strip():
+            payload["description"] = description.strip()
+        with httpx.Client(timeout=20.0) as client:
+            response = client.post(
+                f"{self.GITHUB_API_BASE_URL}/user/repos",
+                headers=self._api_headers(connection.access_token),
+                json=payload,
+            )
+        if response.status_code == 422:
+            raise ValueError(
+                "GitHub could not create that repository. "
+                "The name may already exist or be invalid."
+            )
+
+        if response.status_code == 403:
+            raise RuntimeError(
+                "GitHub denied repository creation. For this GitHub App, "
+                "make sure the app has Administration: Read and write, is "
+                "installed on the student's account, and reconnect GitHub "
+                "after changing the app's permissions."
+            )
+
+        if response.status_code not in {200, 201}:
+            raise RuntimeError(
+                "GitHub repository creation failed: "
+                f"{response.status_code} {response.text[:500]}"
+            )
+        data = response.json()
+        saved = self.save_repository(
+            student_id=student_id, github_repo_id=str(data["id"]),
+            owner=data["owner"]["login"], name=data["name"],
+            full_name=data["full_name"], default_branch=data.get("default_branch") or "main",
+        )
+        return {
+            "id": saved.id, "github_repo_id": saved.github_repo_id,
+            "owner": saved.owner, "name": saved.name,
+            "full_name": saved.full_name, "default_branch": saved.default_branch,
+            "private": bool(data.get("private", False)),
+            "html_url": data.get("html_url"),
+            "description": data.get("description"),
+        }
+
+    def fetch_repository_file(
+        self, student_id: str, repository_id: str, path: str
+    ) -> dict:
+        connection = self._get_valid_connection(student_id)
+        repository = self.get_repository(repository_id)
+        if repository is None or repository.student_id != student_id:
+            raise ValueError("GitHub repository not found.")
+        clean_path = path.strip().strip("/")
+        if not clean_path:
+            raise ValueError("File path cannot be empty.")
+        encoded_path = "/".join(quote(part, safe="") for part in clean_path.split("/") if part)
+        url = f"{self.GITHUB_API_BASE_URL}/repos/{repository.owner}/{repository.name}/contents/{encoded_path}"
+        with httpx.Client(timeout=20.0) as client:
+            response = client.get(url, headers=self._api_headers(connection.access_token), params={"ref": repository.default_branch})
+        if response.status_code == 404:
+            raise FileNotFoundError(clean_path)
+        if response.status_code != 200:
+            raise RuntimeError(f"GitHub file lookup failed: {response.status_code} {response.text[:500]}")
+        data = response.json()
+        if data.get("type") != "file" or not data.get("download_url"):
+            raise ValueError("The selected GitHub path is not a readable file.")
+        with httpx.Client(timeout=20.0) as client:
+            content_response = client.get(data["download_url"], headers=self._api_headers(connection.access_token))
+        if content_response.status_code != 200:
+            raise RuntimeError("GitHub file download failed.")
+        return {"path": clean_path, "content": content_response.text}
 
     def delete_repository(
         self,

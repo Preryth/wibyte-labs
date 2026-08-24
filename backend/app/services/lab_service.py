@@ -159,6 +159,28 @@ class LabService:
         finally:
             db.close()
 
+    def attach_github_repository(
+        self,
+        lab_id: str,
+        github_repository_id: str,
+    ) -> bool:
+        """Attach the student-owned repository that backs this Lab."""
+        db = self.SessionLocal()
+        try:
+            lab = db.get(Lab, lab_id)
+            if lab is None:
+                return False
+            repository = db.get(GitHubRepository, github_repository_id)
+            if repository is None:
+                raise ValueError("GitHub repository not found.")
+            if repository.student_id != lab.student_id:
+                raise ValueError("GitHub repository does not belong to this student.")
+            lab.github_repository_id = repository.id
+            db.commit()
+            return True
+        finally:
+            db.close()
+
     # =========================================================
     # Lab removal
     # =========================================================

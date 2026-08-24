@@ -147,6 +147,11 @@ function App() {
   ] = useState<string | null>(null);
 
   const [
+    ,
+    setGithubPreview,
+  ] = useState<{ repositoryId: string; path: string } | null>(null);
+
+  const [
     expandedWorkspaceDirectories,
     setExpandedWorkspaceDirectories,
   ] = useState<Record<string, boolean>>({});
@@ -562,85 +567,45 @@ async function toggleGitHubDirectory(
 async function openGitHubRepository(
   repositoryId: string
 ) {
-  if (labId) {
-    alert(
-      "Close the current lab before opening a GitHub repository."
-    );
-
+  if (!labId) {
+    alert("Create a Lab before selecting a GitHub repository.");
     return;
   }
-  setOpeningRepositoryId(
-    repositoryId
+
+  if (activeGitHubRepositoryId === repositoryId) {
+    return;
+  }
+
+  const proceed = window.confirm(
+    "Open this repository in the current Lab? Its files will be copied into the empty Lab workspace."
   );
+  if (!proceed) return;
 
-  setCreatingLab(true);
-
+  setOpeningRepositoryId(repositoryId);
   try {
-    const response =
-      await fetch(
-        `${API_URL}/labs?github_repository_id=${encodeURIComponent(
-          repositoryId
-        )}`,
-        {
-          method: "POST",
-        }
-      );
-
+    const response = await fetch(
+      `${API_URL}/github/labs/${labId}/repository`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repository_id: repositoryId }),
+      }
+    );
     if (!response.ok) {
-      const error =
-        await response
-          .json()
-          .catch(() => null);
-
-      throw new Error(
-        error?.detail ??
-          "Failed to open GitHub repository."
-      );
+      const error = await response.json().catch(() => null);
+      throw new Error(error?.detail ?? "Failed to open GitHub repository.");
     }
-
-    const data =
-      await response.json();
-
-    setLabId(
-      data.lab_id
-    );
-
-    setActiveGitHubRepositoryId(
-      repositoryId
-    );
-
-    setExpandedWorkspaceDirectories({});
-    setWorkspaceDirectories({});
+    setActiveGitHubRepositoryId(repositoryId);
     setGitStatus(null);
     setGitDiff(null);
-
-    setFiles([]);
-
-    setSelectedFile(
-      null
-    );
-
+    setSelectedFile(null);
+    setGithubPreview(null);
     setFileContent("");
-
-    setRunning(false);
-
+    await refreshWorkspaceTree();
   } catch (error) {
-    console.error(
-      "Failed to open GitHub repository:",
-      error
-    );
-
-    alert(
-      error instanceof Error
-        ? error.message
-        : "Failed to open GitHub repository."
-    );
+    alert(error instanceof Error ? error.message : "Failed to open GitHub repository.");
   } finally {
-    setOpeningRepositoryId(
-      null
-    );
-
-    setCreatingLab(false);
+    setOpeningRepositoryId(null);
   }
 }
   useEffect(() => {
@@ -776,66 +741,65 @@ useEffect(() => {
   loadGitHubRepositories,
 ]);
 
+  async function createGitHubRepository() {
+    const name = window.prompt("New GitHub repository name:")?.trim();
+    if (!name) return;
+    const description = window.prompt("Description (optional):") ?? "";
+    const isPrivate = window.confirm("Make this repository private? Click Cancel for public.");
+    setGithubLoading(true);
+    try {
+      const response = await fetch(`${API_URL}/github/repositories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, description, private: isPrivate }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to create repository");
+      }
+      await loadGitHubRepositories();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to create repository");
+    } finally {
+      setGithubLoading(false);
+    }
+  }
+
   /*
    * Create lab
    */
 
   async function createLab() {
     setCreatingLab(true);
-
     try {
-      const response =
-        await fetch(
-          `${API_URL}/labs`,
-          {
-            method: "POST",
-          }
-        );
-
-
-      if (!response.ok) {
-        throw new Error(
-          "Failed to create lab"
-        );
+      const response = await fetch(`${API_URL}/labs`, { method: "POST" });
+      if (!response.ok) { const error = await response.json().catch(() => null); throw new Error(error?.detail ?? "Failed to create lab"); }
+      const data = await response.json();
+      setLabId(data.lab_id);
+      setExpandedWorkspaceDirectories({}); setWorkspaceDirectories({}); setGitStatus(null); setGitDiff(null);
+      setFiles([]); setSelectedFile(null); setFileContent(""); setRunning(false);
+      if (!data.github_connected) {
+        setActiveGitHubRepositoryId(null);
+        alert("Connect GitHub in Settings to use your permanent wibyte-workspace repository.");
+        return;
       }
-
-
-      const data =
-        await response.json();
-
-
-      setLabId(
-        data.lab_id
-      );
-
-      setActiveGitHubRepositoryId(null);
-      setExpandedWorkspaceDirectories({});
-      setWorkspaceDirectories({});
-      setGitStatus(null);
-      setGitDiff(null);
-
-      setFiles([]);
-
-      setSelectedFile(
-        null
-      );
-
-      setFileContent("");
-
-      setRunning(false);
-
+      let repository = data.repository;
+      if (data.repository_missing) {
+        alert("Create repository 'wibyte-workspace' GitHub repository");
+        const provisionResponse = await fetch(`${API_URL}/github/labs/${data.lab_id}/workspace-repository`, { method: "POST" });
+        if (!provisionResponse.ok) { const error = await provisionResponse.json().catch(() => null); throw new Error(error?.detail ?? "Failed to create the workspace repository"); }
+        repository = (await provisionResponse.json()).repository;
+      }
+      setActiveGitHubRepositoryId(repository?.id ?? null);
+      await loadFiles(data.lab_id);
+      if (repository?.id) {
+        const statusResponse = await fetch(`${API_URL}/github/labs/${data.lab_id}/git/status`);
+        if (statusResponse.ok) setGitStatus(await statusResponse.json());
+      }
+      void loadGitHubRepositories();
     } catch (error) {
-      console.error(error);
-
-      alert(
-        "Failed to create lab"
-      );
-
-    } finally {
-      setCreatingLab(
-        false
-      );
-    }
+      console.error(error); alert(error instanceof Error ? error.message : "Failed to create lab");
+    } finally { setCreatingLab(false); }
   }
 
 
@@ -849,12 +813,11 @@ useEffect(() => {
     }
 
 
-    if (
-      !window.confirm(
-        "Close this lab? All files in this lab will be lost."
-      )
-    ) {
-      return;
+    if (gitStatus && (!gitStatus.clean || gitStatus.ahead > 0)) {
+      const discard = window.confirm(
+        "Changes made to the repository are yet to be committed and pushed, please commit and push to save changes before closing the lab.\n\nOK: close lab without saving changes\nCancel: take me back"
+      );
+      if (!discard) return;
     }
 
 
@@ -951,6 +914,14 @@ useEffect(() => {
   }
 
 
+  /* Browsers only permit a native leave prompt for tab close/reload. */
+  useEffect(() => {
+    if (!labId || !gitStatus || (gitStatus.clean && gitStatus.ahead === 0)) return;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [labId, gitStatus]);
+
   /*
    * Load files when lab changes
    */
@@ -968,6 +939,12 @@ useEffect(() => {
     }
 
     void loadGitStatus();
+  }, [labId, activeGitHubRepositoryId]);
+
+  useEffect(() => {
+    if (!labId || !activeGitHubRepositoryId) return;
+    const timer = window.setInterval(() => void loadGitStatus(), 2000);
+    return () => window.clearInterval(timer);
   }, [labId, activeGitHubRepositoryId]);
 
   async function loadWorkspaceDirectory(
@@ -1062,53 +1039,6 @@ useEffect(() => {
 
     if (!isExpanded) {
       await loadWorkspaceDirectory(labId, path);
-    }
-  }
-
-  async function createDirectory() {
-    if (!labId) {
-      return;
-    }
-
-    const name = window.prompt(
-      "Enter folder path:"
-    );
-
-    const path = name?.trim();
-
-    if (!path) {
-      return;
-    }
-
-    try {
-      const response = await fetch(
-        `${API_URL}/labs/${labId}/files`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            path,
-            type: "directory",
-          }),
-        }
-      );
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(
-          error?.detail ?? "Failed to create folder"
-        );
-      }
-
-      await refreshWorkspaceTree();
-    } catch (error) {
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to create folder"
-      );
     }
   }
 
@@ -1350,6 +1280,10 @@ useEffect(() => {
     }
   }
 
+  // Retained for the existing repository controls; these operations remain available internally.
+  void loadGitDiff;
+  void pullGitChanges;
+
   /*
    * Create new file
    */
@@ -1421,9 +1355,8 @@ useEffect(() => {
       );
 
 
-      await openFile(
-        path
-      );
+      await openFile(path);
+      if (activeGitHubRepositoryId) void loadGitStatus();
 
     } catch (error) {
       console.error(error);
@@ -1514,28 +1447,70 @@ useEffect(() => {
    * attempting to create another Lab.
    */
   async function openGitHubFile(
-    _repositoryId: string,
+    repositoryId: string,
+    filePath: string
+  ) {
+    setLoadingFile(true);
+    try {
+      const response = await fetch(
+        `${API_URL}/github/repositories/${encodeURIComponent(repositoryId)}/file?path=${encodeURIComponent(filePath)}`
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to load GitHub file");
+      }
+      const data = await response.json();
+      setSelectedFile(null);
+      setGithubPreview({ repositoryId, path: data.path });
+      setFileContent(data.content);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to load GitHub file");
+    } finally {
+      setLoadingFile(false);
+    }
+  }
+
+  async function editGitHubFile(
+    repositoryId: string,
     filePath: string
   ) {
     if (!labId) {
-      alert(
-        "Open the GitHub repository as a Lab first."
-      );
-
+      alert("Create a Lab and select this repository before editing its files.");
       return;
     }
-
-    if (activeGitHubRepositoryId !== _repositoryId) {
-      alert(
-        "Open this repository as the active Lab before opening its files."
-      );
-
+    if (activeGitHubRepositoryId !== repositoryId) {
+      alert("Select this repository for the active Lab before editing its files.");
       return;
     }
-
-    await openFile(filePath);
+    if (!window.confirm(`Copy ${filePath} into the Lab workspace and edit it there?`)) return;
+    try {
+      const source = await fetch(
+        `${API_URL}/github/repositories/${encodeURIComponent(repositoryId)}/file?path=${encodeURIComponent(filePath)}`
+      );
+      if (!source.ok) {
+        const error = await source.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to download GitHub file");
+      }
+      const data = await source.json();
+      const response = await fetch(
+        `${API_URL}/labs/${labId}/files/${encodeURIComponent(filePath)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: data.content }),
+        }
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Failed to copy file into Lab");
+      }
+      setGithubPreview(null);
+      await refreshWorkspaceTree();
+      await openFile(filePath);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to prepare GitHub file for editing");
+    }
   }
-
 
   async function saveFile(): Promise<boolean> {
     if (
@@ -1585,11 +1560,8 @@ useEffect(() => {
        * lab activity.
        */
 
-      void reportLabActivity(
-        labId
-      );
-
-
+      void reportLabActivity(labId);
+      if (activeGitHubRepositoryId) void loadGitStatus();
       return true;
 
     } catch (error) {
@@ -2101,6 +2073,16 @@ useEffect(() => {
           <div className="explorer-header-actions">
             <button
               className="small-action-button"
+              onClick={() => void createGitHubRepository()}
+              disabled={githubLoading || !githubConnected}
+              title="Create GitHub repository"
+              type="button"
+            >
+              +
+            </button>
+
+            <button
+              className="small-action-button"
               onClick={() =>
                 void loadGitHubRepositories()
               }
@@ -2200,14 +2182,15 @@ useEffect(() => {
                           disabled={
                             openingRepositoryId ===
                               repository.id ||
-                            creatingLab ||
-                            Boolean(labId)
+                            creatingLab
                           }
                         >
                           {openingRepositoryId ===
                           repository.id
                             ? "Opening..."
-                            : "Open"}
+                            : activeGitHubRepositoryId === repository.id
+                            ? "Active"
+                            : "Use"}
                         </button>
                       </div>
 
@@ -2247,9 +2230,8 @@ useEffect(() => {
                                     onToggleDirectory={
                                         toggleGitHubDirectory
                                     }
-                                    onOpenFile={
-                                      openGitHubFile
-                                    }
+                                    onOpenFile={openGitHubFile}
+                                    onEditFile={editGitHubFile}
                                   />
                                 ) : (
                                   <div
@@ -2269,6 +2251,13 @@ useEffect(() => {
                                         >
                                           📄{" "}
                                           {item.name}
+                                    </button>
+                                    <button
+                                      className="repo-open-button"
+                                      type="button"
+                                      onClick={() => void editGitHubFile(repository.id, item.path)}
+                                    >
+                                      Edit
                                     </button>
                                   </div>
                                 )
@@ -2301,15 +2290,6 @@ useEffect(() => {
               type="button"
             >
               ↻
-            </button>
-
-            <button
-              className="small-action-button"
-              onClick={createDirectory}
-              title="New folder"
-              type="button"
-            >
-              📁+
             </button>
 
             <button
@@ -2413,10 +2393,11 @@ useEffect(() => {
           )}
 
           <div className="git-actions">
-            <button onClick={() => void loadGitDiff()} disabled={gitLoading} type="button">Diff</button>
-            <button onClick={() => void commitGitChanges()} disabled={gitLoading} type="button">Commit</button>
-            <button onClick={() => void pullGitChanges()} disabled={gitLoading} type="button">Pull</button>
-            <button onClick={() => void pushGitChanges()} disabled={gitLoading} type="button">Push</button>
+            {gitStatus?.ahead && gitStatus.ahead > 0 ? (
+              <button onClick={() => void pushGitChanges()} disabled={gitLoading} type="button">{gitLoading ? "Working..." : "Push"}</button>
+            ) : (
+              <button onClick={() => void commitGitChanges()} disabled={gitLoading || !gitStatus || gitStatus.clean} type="button">{gitLoading ? "Working..." : "Commit"}</button>
+            )}
           </div>
 
           {gitDiff !== null && (
@@ -2754,6 +2735,7 @@ function GitHubDirectoryTree({
   expandedDirectories,
   onToggleDirectory,
   onOpenFile,
+  onEditFile,
 }: {
   repositoryId: string;
   item: GitHubRepositoryItem;
@@ -2770,6 +2752,10 @@ function GitHubDirectoryTree({
     path: string
   ) => void;
   onOpenFile: (
+    repositoryId: string,
+    filePath: string
+  ) => void;
+  onEditFile: (
     repositoryId: string,
     filePath: string
   ) => void;
@@ -2852,9 +2838,8 @@ function GitHubDirectoryTree({
                     onToggleDirectory={
                       onToggleDirectory
                     }
-                    onOpenFile={
-                        onOpenFile
-                    }
+                    onOpenFile={onOpenFile}
+                    onEditFile={onEditFile}
                   />
 
                 ) : (
@@ -2879,6 +2864,13 @@ function GitHubDirectoryTree({
                     >
                       📄{" "}
                       {child.name}
+                    </button>
+                    <button
+                      className="repo-open-button"
+                      type="button"
+                      onClick={() => void onEditFile(repositoryId, child.path)}
+                    >
+                      Edit
                     </button>
 
                   </div>

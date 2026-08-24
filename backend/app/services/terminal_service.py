@@ -62,7 +62,7 @@ class TerminalService:
                 stdout=True,
                 stderr=True,
                 tty=True,
-                workdir="/workspace",
+                workdir="/workspace/wibyte-workspace",
             )
         )
 

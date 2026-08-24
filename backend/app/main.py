@@ -48,6 +48,9 @@ from backend.app.services.github_service import (
 from backend.app.services.gui_service import (
     GuiService,
 )
+from backend.app.services.git_service import (
+    GitService,
+)
 
 
 # ---------------------------------------------------------
@@ -69,6 +72,10 @@ inactivity_service = InactivityService(
 )
 
 gui_service = GuiService(
+    docker_client
+)
+
+git_service = GitService(
     docker_client
 )
 
@@ -168,6 +175,10 @@ app.state.gui_service = (
     gui_service
 )
 
+app.state.git_service = (
+    git_service
+)
+
 
 # ---------------------------------------------------------
 # Routers
@@ -184,6 +195,8 @@ workspace_router.workspace_service = (
 app.include_router(
     workspace_router
 )
+
+github_router.git_service = git_service
 
 app.include_router(
     github_router
@@ -209,193 +222,72 @@ def health_check():
 # ---------------------------------------------------------
 
 @app.post("/labs")
-def create_lab(
-    github_repository_id: str | None = Query(
-        default=None,
-    ),
-):
+def create_lab():
+    """Create a temporary Lab. GitHub remains the persistent source of truth.
+
+    The Lab starts empty when the permanent repository does not yet exist.
+    The frontend can then ask the student to create it. If it already exists,
+    it is cloned immediately into /workspace/wibyte-workspace.
     """
-    Create a new temporary lab for the persistent
-    development student.
-
-    If github_repository_id is provided:
-
-        1. Verify that the repository belongs to
-           the development student.
-        2. Create the Docker container.
-        3. Persist the Lab.
-        4. Download the repository from GitHub.
-        5. Put the repository contents into /workspace.
-
-    The GitHub access token remains in the backend
-    and is never passed into the Docker container.
-    """
-
-    student = (
-        lab_service
-        .get_or_create_development_student()
-    )
-
-    # -----------------------------------------------------
-    # Create Docker container
-    # -----------------------------------------------------
-
+    student = lab_service.get_or_create_development_student()
     try:
-        container = (
-            docker_client
-            .containers
-            .run(
-                "wpl-student:dev",
-                detach=True,
-                tty=True,
-                stdin_open=True,
-                ports={
-                    "6080/tcp": None,
-                },
-            )
+        container = docker_client.containers.run(
+            "wpl-student:dev", detach=True, tty=True, stdin_open=True,
+            ports={"6080/tcp": None},
         )
-
     except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Failed to create lab "
-                f"container: {exc}"
-            ),
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to create lab container: {exc}")
+
+    mkdir_result = container.exec_run(
+        ["mkdir", "-p", "/workspace/wibyte-workspace"],
+        user="root",
+    )
+    if mkdir_result.exit_code != 0:
+        try: container.remove(force=True)
+        except Exception: pass
+        raise HTTPException(status_code=500, detail="Failed to create Lab workspace directory.")
+    container.exec_run(["chown", "-R", "student:student", "/workspace"], user="root")
 
     session = LabSession(
-        id=str(uuid4()),
-        container_id=container.id,
-        status="running",
-        created_at=datetime.now(
-            timezone.utc
-        ),
+        id=str(uuid4()), container_id=container.id, status="running",
+        created_at=datetime.now(timezone.utc),
     )
-
-    # -----------------------------------------------------
-    # Persist Lab
-    # -----------------------------------------------------
-
     try:
-        lab_service.add(
-            session,
-            student.id,
-            github_repository_id,
-        )
-
-    except ValueError as exc:
-
-        try:
-            container.remove(
-                force=True
-            )
-        except Exception:
-            pass
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        )
-
-    except Exception as exc:
-
-        try:
-            container.remove(
-                force=True
-            )
-        except Exception:
-            pass
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Failed to create lab "
-                f"record: {exc}"
-            ),
-        )
-
-    # -----------------------------------------------------
-    # Provision GitHub repository
-    # -----------------------------------------------------
-
-    repository_info = None
-
-    if github_repository_id is not None:
-
-        try:
-            repository_info = (
-                github_service
-                .provision_repository(
-                    student_id=student.id,
-                    repository_id=(
-                        github_repository_id
-                    ),
+        lab_service.add(session, student.id)
+        repository = None
+        repository_missing = False
+        connection = github_service.get_connection(student.id)
+        if connection is None:
+            repository_missing = True
+        else:
+            repositories = github_service.fetch_github_repositories(student.id)
+            repository = next((item for item in repositories if item.get("name") == "wibyte-workspace"), None)
+            if repository is None:
+                repository_missing = True
+            else:
+                lab_service.attach_github_repository(session.id, repository["id"])
+                github_service.provision_repository(
+                    student_id=student.id, repository_id=repository["id"],
                     container_id=container.id,
                 )
-            )
-
-        except ValueError as exc:
-
-            # Remove the database Lab.
-            try:
-                lab_service.remove(
-                    session.id
-                )
-            except Exception:
-                pass
-
-            # Remove the Docker container.
-            try:
-                container.remove(
-                    force=True
-                )
-            except Exception:
-                pass
-
-            raise HTTPException(
-                status_code=400,
-                detail=str(exc),
-            )
-
-        except Exception as exc:
-
-            # Remove the database Lab.
-            try:
-                lab_service.remove(
-                    session.id
-                )
-            except Exception:
-                pass
-
-            # Remove the Docker container.
-            try:
-                container.remove(
-                    force=True
-                )
-            except Exception:
-                pass
-
-            raise HTTPException(
-                status_code=502,
-                detail=(
-                    "Failed to provision GitHub "
-                    f"repository: {exc}"
-                ),
-            )
-
-    # -----------------------------------------------------
-    # Success
-    # -----------------------------------------------------
-
-    return {
-        "lab_id": session.id,
-        "status": session.status,
-        "github_repository_id": (
-            github_repository_id
-        ),
-        "repository": repository_info,
-    }
+        return {
+            "lab_id": session.id, "status": session.status,
+            "repository": repository,
+            "repository_missing": repository_missing,
+            "github_connected": connection is not None,
+        }
+    except ValueError as exc:
+        try: lab_service.remove(session.id)
+        except Exception: pass
+        try: container.remove(force=True)
+        except Exception: pass
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        try: lab_service.remove(session.id)
+        except Exception: pass
+        try: container.remove(force=True)
+        except Exception: pass
+        raise HTTPException(status_code=502, detail=f"Failed to prepare Lab workspace: {exc}")
 
 
 # ---------------------------------------------------------

@@ -5,7 +5,7 @@ import docker
 
 
 class WorkspaceService:
-    WORKSPACE_ROOT = "/workspace"
+    WORKSPACE_ROOT = "/workspace/wibyte-workspace"
 
     def __init__(self, docker_client: docker.DockerClient):
         self.docker_client = docker_client

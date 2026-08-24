@@ -16,6 +16,7 @@ type CodeEditorProps = {
   onActivity?: () => void;
 
   language?: string;
+  readOnly?: boolean;
 };
 
 
@@ -24,6 +25,7 @@ export default function CodeEditor({
   onChange,
   onActivity,
   language = "python",
+  readOnly = false,
 }: CodeEditorProps) {
 
   /*
@@ -78,6 +80,8 @@ export default function CodeEditor({
         fontSize: 14,
 
         automaticLayout: true,
+
+        readOnly,
 
         padding: {
           top: 12,

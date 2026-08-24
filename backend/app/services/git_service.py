@@ -16,7 +16,7 @@ from backend.app.services.github_service import github_service
 class GitService:
     """Git operations for the repository already provisioned into a Lab."""
 
-    WORKSPACE = "/workspace"
+    WORKSPACE = "/workspace/wibyte-workspace"
 
     def __init__(self, docker_client: docker.DockerClient):
         self.docker_client = docker_client
