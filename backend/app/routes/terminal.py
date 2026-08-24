@@ -37,7 +37,7 @@ def file_uses_tkinter(
             f"cat -- {safe_path}",
         ],
         user="student",
-        workdir="/workspace",
+        workdir="/workspace/wibyte-workspace",
     )
 
     if result.exit_code != 0:
