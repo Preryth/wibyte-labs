@@ -51,13 +51,23 @@ class GitService:
 
     def _container(self, container_id: str):
         try:
-            return self.docker_client.containers.get(container_id)
+            container = self.docker_client.containers.get(container_id)
         except docker.errors.NotFound as exc:
             raise ValueError("Lab container not found.") from exc
 
+        if container.status != "running":
+            raise ValueError("Lab container is not running.")
+
+        return container
+
     def _run(self, container_id: str, command: list[str], *, environment: dict[str, str] | None = None):
         container = self._container(container_id)
-        result = container.exec_run(command, workdir=self.WORKSPACE, environment=environment)
+        try:
+            result = container.exec_run(command, workdir=self.WORKSPACE, environment=environment)
+        except docker.errors.APIError as exc:
+            if getattr(exc, "status_code", None) == 409:
+                raise ValueError("Lab container is not running.") from exc
+            raise
         output = result.output.decode("utf-8", errors="replace").strip()
         if result.exit_code != 0:
             raise RuntimeError(output or "Git command failed.")

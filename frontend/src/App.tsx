@@ -5,6 +5,11 @@ import {
   useState,
 } from "react";
 
+import type {
+  Session,
+  User,
+} from "@supabase/supabase-js";
+
 import Terminal, {
   type TerminalHandle,
 } from "./Terminal";
@@ -13,10 +18,22 @@ import CodeEditor from "./CodeEditor";
 import SettingsPanel from "./SettingsPanel";
 
 import "./App.css";
+import LoginScreen from "./LoginScreen";
+import ResetPasswordScreen from "./ResetPasswordScreen";
+import { supabase } from "./lib/supabase";
 
 
 const API_URL =
   import.meta.env.VITE_API_URL;
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const { data } = await supabase.auth.getSession();
+  const headers = new Headers(init.headers);
+  if (data.session?.access_token) {
+    headers.set("Authorization", `Bearer ${data.session.access_token}`);
+  }
+  return window.fetch(input, { ...init, headers });
+}
 
 
 type LabFile = {
@@ -68,13 +85,32 @@ type GitStatus = {
   }[];
 };
 
-function App() {
+function LabApp({
+  currentUser,
+  handleSignOut,
+}: {
+  currentUser: User | null;
+  handleSignOut: () => Promise<void>;
+}) {
   const [
     backendStatus,
     setBackendStatus,
   ] = useState(
     "Checking backend..."
   );
+
+  const [accessToken, setAccessToken] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (active) setAccessToken(data.session?.access_token ?? "");
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active) setAccessToken(session?.access_token ?? "");
+    });
+    return () => { active = false; listener.subscription.unsubscribe(); };
+  }, []);
 
 
   const [
@@ -218,6 +254,9 @@ function App() {
       null
     );
 
+  /* Prevent Git status polling errors while a Lab is intentionally closing. */
+  const closingLabRef = useRef(false);
+
 
   /*
    * -------------------------------------------------------
@@ -252,7 +291,7 @@ function App() {
       async (id: string) => {
         try {
           const response =
-            await fetch(
+            await apiFetch(
               `${API_URL}/labs/${id}/activity`,
               {
                 method: "POST",
@@ -453,7 +492,7 @@ async function loadGitHubDirectory(
 
   try {
     const response =
-      await fetch(
+      await apiFetch(
         `${API_URL}/github/repositories/${encodeURIComponent(
           repositoryId
         )}/contents?path=${encodeURIComponent(
@@ -583,7 +622,7 @@ async function openGitHubRepository(
 
   setOpeningRepositoryId(repositoryId);
   try {
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_URL}/github/labs/${labId}/repository`,
       {
         method: "POST",
@@ -609,7 +648,7 @@ async function openGitHubRepository(
   }
 }
   useEffect(() => {
-    fetch(`${API_URL}/health`)
+    apiFetch(`${API_URL}/health`)
       .then((response) => {
         if (!response.ok) {
           throw new Error(
@@ -644,7 +683,7 @@ const loadGitHubRepositories = useCallback(
 
     try {
       const statusResponse =
-        await fetch(
+        await apiFetch(
           `${API_URL}/github/status`
         );
 
@@ -671,7 +710,7 @@ const loadGitHubRepositories = useCallback(
       }
 
       const repositoriesResponse =
-        await fetch(
+        await apiFetch(
           `${API_URL}/github/repositories`
         );
 
@@ -745,13 +784,12 @@ useEffect(() => {
     const name = window.prompt("New GitHub repository name:")?.trim();
     if (!name) return;
     const description = window.prompt("Description (optional):") ?? "";
-    const isPrivate = window.confirm("Make this repository private? Click Cancel for public.");
     setGithubLoading(true);
     try {
-      const response = await fetch(`${API_URL}/github/repositories`, {
+      const response = await apiFetch(`${API_URL}/github/repositories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, private: isPrivate }),
+        body: JSON.stringify({ name, description, private: false }),
       });
       if (!response.ok) {
         const error = await response.json().catch(() => null);
@@ -772,9 +810,10 @@ useEffect(() => {
   async function createLab() {
     setCreatingLab(true);
     try {
-      const response = await fetch(`${API_URL}/labs`, { method: "POST" });
+      const response = await apiFetch(`${API_URL}/labs`, { method: "POST" });
       if (!response.ok) { const error = await response.json().catch(() => null); throw new Error(error?.detail ?? "Failed to create lab"); }
       const data = await response.json();
+      closingLabRef.current = false;
       setLabId(data.lab_id);
       setExpandedWorkspaceDirectories({}); setWorkspaceDirectories({}); setGitStatus(null); setGitDiff(null);
       setFiles([]); setSelectedFile(null); setFileContent(""); setRunning(false);
@@ -786,14 +825,14 @@ useEffect(() => {
       let repository = data.repository;
       if (data.repository_missing) {
         alert("Create repository 'wibyte-workspace' GitHub repository");
-        const provisionResponse = await fetch(`${API_URL}/github/labs/${data.lab_id}/workspace-repository`, { method: "POST" });
+        const provisionResponse = await apiFetch(`${API_URL}/github/labs/${data.lab_id}/workspace-repository`, { method: "POST" });
         if (!provisionResponse.ok) { const error = await provisionResponse.json().catch(() => null); throw new Error(error?.detail ?? "Failed to create the workspace repository"); }
         repository = (await provisionResponse.json()).repository;
       }
       setActiveGitHubRepositoryId(repository?.id ?? null);
       await loadFiles(data.lab_id);
       if (repository?.id) {
-        const statusResponse = await fetch(`${API_URL}/github/labs/${data.lab_id}/git/status`);
+        const statusResponse = await apiFetch(`${API_URL}/github/labs/${data.lab_id}/git/status`);
         if (statusResponse.ok) setGitStatus(await statusResponse.json());
       }
       void loadGitHubRepositories();
@@ -821,6 +860,8 @@ useEffect(() => {
     }
 
 
+    closingLabRef.current = true;
+
     try {
       /*
        * If a process is running,
@@ -833,7 +874,7 @@ useEffect(() => {
 
 
       const response =
-        await fetch(
+        await apiFetch(
           `${API_URL}/labs/${labId}`,
           {
             method: "DELETE",
@@ -866,6 +907,7 @@ useEffect(() => {
       setRunning(false);
 
     } catch (error) {
+      closingLabRef.current = false;
       console.error(error);
 
       alert(
@@ -884,7 +926,7 @@ useEffect(() => {
   ) {
     try {
       const response =
-        await fetch(
+        await apiFetch(
           `${API_URL}/labs/${id}/files`
         );
 
@@ -967,7 +1009,7 @@ useEffect(() => {
         ? `?path=${encodeURIComponent(path)}`
         : "";
 
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/labs/${id}/files${suffix}`
       );
 
@@ -1057,7 +1099,7 @@ useEffect(() => {
     }
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/labs/${labId}/files/rename`,
         {
           method: "POST",
@@ -1093,14 +1135,14 @@ useEffect(() => {
   }
 
   async function loadGitStatus() {
-    if (!labId || !activeGitHubRepositoryId) {
+    if (!labId || !activeGitHubRepositoryId || closingLabRef.current) {
       return;
     }
 
     setGitLoading(true);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/github/labs/${labId}/git/status`
       );
 
@@ -1111,11 +1153,14 @@ useEffect(() => {
 
       setGitStatus(await response.json());
     } catch (error) {
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to load Git status"
-      );
+      /* A status request can already be in flight when the Lab is closed. */
+      if (!closingLabRef.current) {
+        alert(
+          error instanceof Error
+            ? error.message
+            : "Failed to load Git status"
+        );
+      }
     } finally {
       setGitLoading(false);
     }
@@ -1129,7 +1174,7 @@ useEffect(() => {
     setGitLoading(true);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/github/labs/${labId}/git/diff`
       );
 
@@ -1169,7 +1214,7 @@ useEffect(() => {
     setGitLoading(true);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/github/labs/${labId}/git/commit`,
         {
           method: "POST",
@@ -1208,7 +1253,7 @@ useEffect(() => {
     setGitLoading(true);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/github/labs/${labId}/git/push`,
         { method: "POST" }
       );
@@ -1249,7 +1294,7 @@ useEffect(() => {
     setGitLoading(true);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/github/labs/${labId}/git/pull`,
         { method: "POST" }
       );
@@ -1316,7 +1361,7 @@ useEffect(() => {
 
     try {
       const response =
-        await fetch(
+        await apiFetch(
           `${API_URL}/labs/${labId}/files`,
           {
             method: "POST",
@@ -1389,7 +1434,7 @@ useEffect(() => {
 
     try {
       const response =
-        await fetch(
+        await apiFetch(
           `${API_URL}/labs/${labId}/files/${encodeURIComponent(
             path
           )}`
@@ -1452,7 +1497,7 @@ useEffect(() => {
   ) {
     setLoadingFile(true);
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/github/repositories/${encodeURIComponent(repositoryId)}/file?path=${encodeURIComponent(filePath)}`
       );
       if (!response.ok) {
@@ -1484,7 +1529,7 @@ useEffect(() => {
     }
     if (!window.confirm(`Copy ${filePath} into the Lab workspace and edit it there?`)) return;
     try {
-      const source = await fetch(
+      const source = await apiFetch(
         `${API_URL}/github/repositories/${encodeURIComponent(repositoryId)}/file?path=${encodeURIComponent(filePath)}`
       );
       if (!source.ok) {
@@ -1492,7 +1537,7 @@ useEffect(() => {
         throw new Error(error?.detail ?? "Failed to download GitHub file");
       }
       const data = await source.json();
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_URL}/labs/${labId}/files/${encodeURIComponent(filePath)}`,
         {
           method: "PUT",
@@ -1528,7 +1573,7 @@ useEffect(() => {
 
     try {
       const response =
-        await fetch(
+        await apiFetch(
           `${API_URL}/labs/${labId}/files/${encodeURIComponent(
             selectedFile
           )}`,
@@ -1652,7 +1697,7 @@ useEffect(() => {
 
     try {
       const response =
-        await fetch(
+        await apiFetch(
           `${API_URL}/labs/${labId}/files/rename`,
           {
             method: "POST",
@@ -1745,7 +1790,7 @@ useEffect(() => {
 
     try {
       const response =
-        await fetch(
+        await apiFetch(
           `${API_URL}/labs/${labId}/files/${encodeURIComponent(
             path
           )}`,
@@ -1830,7 +1875,7 @@ useEffect(() => {
     );
 
     try {
-      const startResponse = await fetch(
+      const startResponse = await apiFetch(
         `${API_URL}/labs/${labId}/gui/start`,
         { method: "POST" }
       );
@@ -1842,7 +1887,7 @@ useEffect(() => {
         );
       }
 
-      const connectionResponse = await fetch(
+      const connectionResponse = await apiFetch(
         `${API_URL}/labs/${labId}/gui/connection`
       );
 
@@ -2509,6 +2554,7 @@ useEffect(() => {
           labId={
             labId
           }
+          accessToken={accessToken}
           onProcessExit={
             handleProcessExit
           }
@@ -2531,6 +2577,10 @@ useEffect(() => {
 {settingsOpen && (
   <SettingsPanel
     apiUrl={API_URL}
+    userEmail={currentUser?.email ?? null}
+    onSignOut={() =>
+      void handleSignOut()
+    }
     onClose={() =>
       setSettingsOpen(false)
     }
@@ -2887,6 +2937,237 @@ function GitHubDirectoryTree({
       )}
 
     </div>
+  );
+}
+
+
+type ApprovalStatus =
+  | "pending"
+  | "approved"
+  | "declined";
+
+
+function AccountStatus({
+  status,
+  onSignOut,
+}: {
+  status: ApprovalStatus;
+  onSignOut: () => void;
+}) {
+  const declined =
+    status === "declined";
+
+  return (
+    <main className="account-status-screen">
+      <section className="account-status-card">
+        <h1>
+          {declined
+            ? "Account access unavailable"
+            : "Your account is awaiting approval"}
+        </h1>
+
+        <p>
+          {declined
+            ? "This account has not been granted access to WiByte Labs. Contact WiByte if you believe this is a mistake."
+            : "Your account has been created successfully. A WiByte administrator must approve it before you can use WiByte Labs."}
+        </p>
+
+        <button
+          type="button"
+          onClick={onSignOut}
+        >
+          Sign out
+        </button>
+      </section>
+    </main>
+  );
+}
+
+
+function App() {
+  if (
+    window.location.pathname ===
+    "/reset-password"
+  ) {
+    return <ResetPasswordScreen />;
+  }
+
+  const [
+    session,
+    setSession,
+  ] = useState<Session | null>(null);
+
+  const [
+    currentUser,
+    setCurrentUser,
+  ] = useState<User | null>(null);
+
+  const [
+    approvalStatus,
+    setApprovalStatus,
+  ] = useState<ApprovalStatus | null>(null);
+
+  const [
+    authLoading,
+    setAuthLoading,
+  ] = useState(true);
+
+  const loadAccountAccess =
+    useCallback(
+      async (user: User) => {
+        const {
+          data,
+          error,
+        } = await supabase
+          .from("profiles")
+          .select("approval_status")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (error) {
+          throw error;
+        }
+
+        return data?.approval_status as
+          | ApprovalStatus
+          | undefined;
+      },
+      []
+    );
+
+  useEffect(() => {
+    let active = true;
+
+    const applySession =
+      async (nextSession: Session | null) => {
+        if (!active) {
+          return;
+        }
+
+        setSession(nextSession);
+        setCurrentUser(
+          nextSession?.user ?? null
+        );
+
+        if (!nextSession?.user) {
+          setApprovalStatus(null);
+          setAuthLoading(false);
+          return;
+        }
+
+        try {
+          const status =
+            await loadAccountAccess(
+              nextSession.user
+            );
+
+          if (!active) {
+            return;
+          }
+
+          /*
+           * A missing profile is treated as pending.
+           * The database trigger supplied with this update
+           * normally creates the profile automatically.
+           */
+          setApprovalStatus(
+            status ?? "pending"
+          );
+        } catch (error) {
+          console.error(
+            "Failed to load account access:",
+            error
+          );
+
+          if (active) {
+            setApprovalStatus("pending");
+          }
+        } finally {
+          if (active) {
+            setAuthLoading(false);
+          }
+        }
+      };
+
+    const {
+      data: {
+        subscription,
+      },
+    } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        void applySession(nextSession);
+      }
+    );
+
+    void supabase.auth
+      .getSession()
+      .then(({ data }) =>
+        applySession(data.session)
+      )
+      .catch((error) => {
+        console.error(
+          "Failed to load authentication session:",
+          error
+        );
+
+        if (active) {
+          setAuthLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, [loadAccountAccess]);
+
+  async function handleSignOut() {
+    const {
+      error,
+    } = await supabase.auth.signOut();
+
+    if (error) {
+      console.error(
+        "Failed to sign out:",
+        error
+      );
+    }
+  }
+
+  if (authLoading) {
+    return (
+      <main className="auth-loading">
+        <div className="auth-loading-card">
+          Checking your sign-in...
+        </div>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return <LoginScreen />;
+  }
+
+  if (approvalStatus !== "approved") {
+    return (
+      <AccountStatus
+        status={
+          approvalStatus ??
+          "pending"
+        }
+        onSignOut={() =>
+          void handleSignOut()
+        }
+      />
+    );
+  }
+
+  return (
+    <LabApp
+      key={currentUser?.id ?? "anonymous"}
+      currentUser={currentUser}
+      handleSignOut={handleSignOut}
+    />
   );
 }
 

@@ -1,5 +1,7 @@
 import asyncio
 import docker
+from dotenv import load_dotenv
+load_dotenv()
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -9,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.models.lab import LabSession
+from backend.app.auth import CurrentUser
 
 from backend.app.routes.terminal import (
     router as terminal_router,
@@ -222,14 +225,14 @@ def health_check():
 # ---------------------------------------------------------
 
 @app.post("/labs")
-def create_lab():
+def create_lab(user: CurrentUser):
     """Create a temporary Lab. GitHub remains the persistent source of truth.
 
     The Lab starts empty when the permanent repository does not yet exist.
     The frontend can then ask the student to create it. If it already exists,
     it is cloned immediately into /workspace/wibyte-workspace.
     """
-    student = lab_service.get_or_create_development_student()
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
     try:
         container = docker_client.containers.run(
             "wpl-student:dev", detach=True, tty=True, stdin_open=True,
@@ -299,14 +302,14 @@ def create_lab():
 )
 def gui_status(
     lab_id: str,
-):
+    user: CurrentUser):
     """
     Return the GUI-process status for an existing Lab without
     starting the GUI environment.
     """
 
-    session = lab_service.get(
-        lab_id
+    session = lab_service.get_for_student(
+        lab_id, user.id
     )
 
     if session is None:
@@ -344,7 +347,7 @@ def gui_status(
 )
 def start_gui(
     lab_id: str,
-):
+    user: CurrentUser):
     """
     Start Xvfb, Fluxbox, x11vnc, and websockify/noVNC inside the
     existing Lab container.
@@ -353,8 +356,8 @@ def start_gui(
     Calling it again reuses the existing GUI processes.
     """
 
-    session = lab_service.get(
-        lab_id
+    session = lab_service.get_for_student(
+        lab_id, user.id
     )
 
     if session is None:
@@ -405,7 +408,7 @@ def start_gui(
 )
 def gui_connection(
     lab_id: str,
-):
+    user: CurrentUser):
     """
     Return the browser URL for this Lab's noVNC server.
 
@@ -414,8 +417,8 @@ def gui_connection(
     itself remains localhost-only inside the container.
     """
 
-    session = lab_service.get(
-        lab_id
+    session = lab_service.get_for_student(
+        lab_id, user.id
     )
 
     if session is None:
@@ -511,10 +514,13 @@ def gui_connection(
 )
 def record_lab_activity(
     lab_id: str,
-):
+    user: CurrentUser):
     """
     Record meaningful user activity in the lab.
     """
+
+    if lab_service.get_for_student(lab_id, user.id) is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
 
     updated = (
         lab_service
@@ -544,7 +550,7 @@ def record_lab_activity(
 )
 def delete_lab(
     lab_id: str,
-):
+    user: CurrentUser):
     """
     Permanently end a lab session.
 
@@ -561,8 +567,8 @@ def delete_lab(
     container and therefore ends automatically with the Lab.
     """
 
-    session = lab_service.get(
-        lab_id
+    session = lab_service.get_for_student(
+        lab_id, user.id
     )
 
     if session is None:

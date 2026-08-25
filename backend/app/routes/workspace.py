@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.app.services.lab_service import lab_service
+from backend.app.auth import CurrentUser
 
 
 router = APIRouter()
@@ -25,8 +26,9 @@ class RenameFileRequest(BaseModel):
 def list_files(
     lab_id: str,
     path: str = ".",
+    user: CurrentUser = None,
 ):
-    session = lab_service.get(lab_id)
+    session = lab_service.get_for_student(lab_id, user.id)
 
     if session is None:
         raise HTTPException(
@@ -66,9 +68,9 @@ def list_files(
 )
 def read_file(
     lab_id: str,
-    path: str,
+    path: str,    user: CurrentUser = None,
 ):
-    session = lab_service.get(lab_id)
+    session = lab_service.get_for_student(lab_id, user.id)
 
     if session is None:
         raise HTTPException(
@@ -108,9 +110,9 @@ def read_file(
 def write_file(
     lab_id: str,
     path: str,
-    request: FileWriteRequest,
+    request: FileWriteRequest,    user: CurrentUser = None,
 ):
-    session = lab_service.get(lab_id)
+    session = lab_service.get_for_student(lab_id, user.id)
 
     if session is None:
         raise HTTPException(
@@ -144,9 +146,9 @@ def write_file(
 )
 def create_file(
     lab_id: str,
-    request: CreateFileRequest,
+    request: CreateFileRequest,    user: CurrentUser = None,
 ):
-    session = lab_service.get(lab_id)
+    session = lab_service.get_for_student(lab_id, user.id)
 
     if session is None:
         raise HTTPException(
@@ -196,9 +198,9 @@ def create_file(
 )
 def rename_file(
     lab_id: str,
-    request: RenameFileRequest,
+    request: RenameFileRequest,    user: CurrentUser = None,
 ):
-    session = lab_service.get(lab_id)
+    session = lab_service.get_for_student(lab_id, user.id)
 
     if session is None:
         raise HTTPException(
@@ -248,9 +250,9 @@ def rename_file(
 )
 def delete_file(
     lab_id: str,
-    path: str,
+    path: str,    user: CurrentUser = None,
 ):
-    session = lab_service.get(lab_id)
+    session = lab_service.get_for_student(lab_id, user.id)
 
     if session is None:
         raise HTTPException(

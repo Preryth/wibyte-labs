@@ -1,0 +1,192 @@
+.login-screen,
+.auth-loading,
+.account-status-screen {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.login-screen,
+.account-status-screen {
+  background:
+    radial-gradient(
+      circle at top,
+      rgba(91, 122, 255, 0.16),
+      transparent 42%
+    ),
+    #0b0f19;
+}
+
+.login-card,
+.account-status-card {
+  width: min(100%, 430px);
+  padding: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 18px;
+  background: rgba(20, 26, 39, 0.96);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+}
+
+.login-brand,
+.account-status-card {
+  text-align: center;
+}
+
+.login-brand-mark {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: #6d7cff;
+  color: #ffffff;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.login-brand h1 {
+  margin: 0;
+  color: #ffffff;
+  font-size: 28px;
+}
+
+.login-brand p {
+  margin: 10px 0 0;
+  color: rgba(255, 255, 255, 0.64);
+  line-height: 1.5;
+}
+
+.login-divider {
+  height: 1px;
+  margin: 32px 0;
+  background: rgba(255, 255, 255, 0.10);
+}
+
+.login-form-title {
+  margin: 0 0 22px;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.login-form {
+  display: grid;
+  gap: 16px;
+}
+
+.login-field {
+  display: grid;
+  gap: 7px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 14px;
+}
+
+.login-field input {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+  font: inherit;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.login-field input:focus {
+  border-color: #6d7cff;
+  box-shadow: 0 0 0 3px rgba(109, 124, 255, 0.14);
+}
+
+.login-submit-button {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: 10px;
+  background: #6d7cff;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.login-submit-button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.login-actions {
+  margin-top: 22px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 14px;
+}
+
+.login-actions p {
+  margin: 12px 0 0;
+}
+
+.login-actions button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #9da8ff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.login-error,
+.login-message {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.login-error {
+  color: #ff9a9a;
+}
+
+.login-message {
+  color: #a8e6bb;
+}
+
+.account-status-card h1 {
+  margin: 0 0 14px;
+  color: #ffffff;
+  font-size: 24px;
+}
+
+.account-status-card p {
+  color: rgba(255, 255, 255, 0.68);
+  line-height: 1.55;
+}
+
+.account-status-card button {
+  margin-top: 16px;
+  padding: 10px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.auth-loading {
+  background: #0b0f19;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.auth-loading-card {
+  padding: 18px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 12px;
+  background: rgba(20, 26, 39, 0.96);
+}

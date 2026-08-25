@@ -12,6 +12,7 @@ from fastapi import (
 from backend.app.services.lab_service import (
     lab_service,
 )
+from backend.app.auth import authenticate_token
 
 
 router = APIRouter()
@@ -83,9 +84,15 @@ async def terminal(
 ):
     await websocket.accept()
 
-    session = lab_service.get(
-        lab_id
-    )
+    token = websocket.query_params.get("access_token", "")
+    try:
+        user = authenticate_token(token)
+    except Exception:
+        await websocket.send_json({"type": "error", "message": "Authentication failed"})
+        await websocket.close(code=1008)
+        return
+
+    session = lab_service.get_for_student(lab_id, user.id)
 
     if session is None:
         await websocket.send_json(

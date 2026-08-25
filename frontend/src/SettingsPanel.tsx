@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
+import { supabase } from "./lib/supabase";
 import "./SettingsPanel.css";
+
+async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const { data } = await supabase.auth.getSession();
+  const headers = new Headers(init.headers);
+  if (data.session?.access_token) headers.set("Authorization", `Bearer ${data.session.access_token}`);
+  return window.fetch(input, { ...init, headers });
+}
 
 type StudentSettings = {
   student: {
@@ -18,11 +26,15 @@ type StudentSettings = {
 
 type Props = {
   apiUrl: string;
+  userEmail: string | null;
+  onSignOut: () => void;
   onClose: () => void;
 };
 
 export default function SettingsPanel({
   apiUrl,
+  userEmail,
+  onSignOut,
   onClose,
 }: Props) {
   const [settings, setSettings] =
@@ -48,13 +60,27 @@ export default function SettingsPanel({
 
   const [saved, setSaved] =
     useState(false);
+  const [currentPassword, setCurrentPassword] =
+    useState("");
+
+  const [newPassword, setNewPassword] =
+    useState("");
+
+  const [confirmNewPassword, setConfirmNewPassword] =
+    useState("");
+
+  const [changingPassword, setChangingPassword] =
+    useState(false);
+
+  const [passwordMessage, setPasswordMessage] =
+    useState<string | null>(null);
 
   async function loadSettings() {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${apiUrl}/student/settings`
       );
 
@@ -88,7 +114,7 @@ export default function SettingsPanel({
 
     async function load() {
       try {
-        const response = await fetch(
+        const response = await apiFetch(
           `${apiUrl}/student/settings`
         );
 
@@ -130,7 +156,7 @@ export default function SettingsPanel({
     return () => {
       cancelled = true;
     };
-  }, [apiUrl]);
+  }, [apiUrl, userEmail]);
 
   function startEditingProfile() {
     setSaved(false);
@@ -157,7 +183,7 @@ export default function SettingsPanel({
     setError(null);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${apiUrl}/student/settings`,
         {
           method: "PUT",
@@ -203,8 +229,16 @@ export default function SettingsPanel({
       return;
     }
 
-    window.location.href =
-      `${apiUrl}/github/connect`;
+    void (async () => {
+      try {
+        const response = await apiFetch(`${apiUrl}/github/connect`, { method: "POST" });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.authorization_url) throw new Error(payload?.detail ?? "Failed to start GitHub connection.");
+        window.location.href = payload.authorization_url;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to start GitHub connection.");
+      }
+    })();
   }
 
   async function disconnectGithub() {
@@ -228,7 +262,7 @@ export default function SettingsPanel({
     setSaved(false);
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${apiUrl}/github/connection`,
         {
           method: "DELETE",
@@ -255,6 +289,97 @@ export default function SettingsPanel({
       );
     } finally {
       setDisconnectingGithub(false);
+    }
+  }
+
+  async function changePassword() {
+    setPasswordMessage(null);
+    setError(null);
+
+    if (
+      !currentPassword ||
+      !newPassword ||
+      !confirmNewPassword
+    ) {
+      setError(
+        "Complete all password fields."
+      );
+      return;
+    }
+
+    if (
+      newPassword.length < 8
+    ) {
+      setError(
+        "Your new password must be at least 8 characters long."
+      );
+      return;
+    }
+
+    if (
+      newPassword !==
+      confirmNewPassword
+    ) {
+      setError(
+        "The new passwords do not match."
+      );
+      return;
+    }
+
+    if (!userEmail) {
+      setError(
+        "Your account email is unavailable."
+      );
+      return;
+    }
+
+    setChangingPassword(true);
+
+    try {
+      /*
+       * Verify the current password first. This prevents an
+       * unattended signed-in browser session from silently
+       * changing the account password.
+       */
+      const {
+        error: verificationError,
+      } =
+        await supabase.auth.signInWithPassword({
+          email: userEmail,
+          password: currentPassword,
+        });
+
+      if (verificationError) {
+        throw new Error(
+          "Your current password is incorrect."
+        );
+      }
+
+      const {
+        error: updateError,
+      } =
+        await supabase.auth.updateUser({
+          password: newPassword,
+        });
+
+      if (updateError) {
+        throw updateError;
+      }
+
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmNewPassword("");
+      setPasswordMessage(
+        "Password changed successfully."
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to change your password."
+      );
+    } finally {
+      setChangingPassword(false);
     }
   }
 
@@ -384,6 +509,90 @@ export default function SettingsPanel({
                   )}
                 </div>
               )}
+            </section>
+
+            <section className="settings-section">
+              <div className="settings-section-title">
+                Account
+              </div>
+
+              <label className="settings-field">
+                <span>Signed in as</span>
+                <input
+                  value={userEmail ?? ""}
+                  readOnly
+                />
+              </label>
+
+              <div className="settings-password-fields">
+                <label className="settings-field">
+                  <span>Current password</span>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(event) =>
+                      setCurrentPassword(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="settings-field">
+                  <span>New password</span>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) =>
+                      setNewPassword(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+
+                <label className="settings-field">
+                  <span>Confirm new password</span>
+                  <input
+                    type="password"
+                    value={confirmNewPassword}
+                    onChange={(event) =>
+                      setConfirmNewPassword(
+                        event.target.value
+                      )
+                    }
+                  />
+                </label>
+              </div>
+
+              {passwordMessage && (
+                <div className="settings-saved">
+                  {passwordMessage}
+                </div>
+              )}
+
+              <div className="settings-save-row">
+                <button
+                  className="settings-primary-button"
+                  onClick={() =>
+                    void changePassword()
+                  }
+                  disabled={changingPassword}
+                  type="button"
+                >
+                  {changingPassword
+                    ? "Changing..."
+                    : "Change password"}
+                </button>
+
+                <button
+                  className="settings-danger-button"
+                  onClick={onSignOut}
+                  type="button"
+                >
+                  Sign out
+                </button>
+              </div>
             </section>
 
             <section className="settings-section">

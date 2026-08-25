@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.services.github_service import github_service
 from backend.app.services.lab_service import lab_service
+from backend.app.auth import CurrentUser
 
 router = APIRouter(prefix="/student", tags=["Student"])
 
@@ -46,13 +47,13 @@ def settings_response(student):
     }
 
 @router.get("/settings")
-def get_student_settings():
-    student = lab_service.get_or_create_development_student()
+def get_student_settings(user: CurrentUser):
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
     return settings_response(student)
 
 @router.put("/settings")
-def update_student_settings(request: StudentSettingsUpdate):
-    student = lab_service.get_or_create_development_student()
+def update_student_settings(request: StudentSettingsUpdate, user: CurrentUser):
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
     updated = lab_service.update_student_profile(
         student_id=student.id,
         name=normalise_name(request.name),

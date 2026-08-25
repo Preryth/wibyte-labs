@@ -27,6 +27,7 @@ from backend.app.models.github_connection import (
 from backend.app.models.github_repository import (
     GitHubRepository,
 )
+from backend.app.models.student import Student
 
 
 class GitHubService:
@@ -537,6 +538,94 @@ class GitHubService:
                 .scalars()
                 .first()
             )
+
+            github_connection = (
+                db.execute(
+                    select(GitHubConnection)
+                    .where(
+                        GitHubConnection.github_user_id
+                        == github_user_id
+                    )
+                )
+                .scalars()
+                .first()
+            )
+
+            if (
+                github_connection is not None
+                and github_connection.student_id != student_id
+            ):
+                # A GitHub account must not normally be shared between
+                # different WiByte accounts. The only exception we support
+                # is migrating a connection created by the old local
+                # development setup, whose student record has no identity
+                # information. This preserves existing development data
+                # without allowing one real user to take another user's
+                # GitHub connection.
+                legacy_student = db.get(
+                    Student,
+                    github_connection.student_id,
+                )
+
+                if legacy_student is None:
+                    raise RuntimeError(
+                        "This GitHub account is already connected to "
+                        "another WiByte Labs account."
+                    )
+
+                current_student = db.get(
+                    Student,
+                    student_id,
+                )
+
+                legacy_email = (
+                    legacy_student.email or ""
+                ).strip().lower()
+
+                current_email = (
+                    (current_student.email if current_student else None)
+                    or ""
+                ).strip().lower()
+
+                # Connections created before Supabase authentication may
+                # belong to an older local student record. We can safely
+                # migrate those records when they have no identity details,
+                # or when the old and current records clearly represent the
+                # same email address. A connection belonging to a different
+                # identified account must remain protected.
+                is_legacy_connection = (
+                    not legacy_email
+                    or (
+                        current_email
+                        and legacy_email == current_email
+                    )
+                )
+
+                if not is_legacy_connection:
+                    raise RuntimeError(
+                        "This GitHub account is already connected to "
+                        "another WiByte Labs account."
+                    )
+
+                if connection is not None:
+                    raise RuntimeError(
+                        "A GitHub connection is already active for this "
+                        "WiByte Labs account."
+                    )
+
+                github_connection.student_id = student_id
+                connection = github_connection
+
+                # Repository records created by the legacy development
+                # account belong to the same GitHub identity, so migrate
+                # them with the connection.
+                db.query(GitHubRepository).filter(
+                    GitHubRepository.student_id
+                    == legacy_student.id
+                ).update(
+                    {"student_id": student_id},
+                    synchronize_session=False,
+                )
 
             now = datetime.now(timezone.utc)
 
@@ -1287,7 +1376,7 @@ class GitHubService:
         if not name:
             raise ValueError("Repository name cannot be empty.")
         connection = self._get_valid_connection(student_id)
-        payload = {"name": name, "private": bool(private), "auto_init": True}
+        payload = {"name": name, "private": False, "auto_init": True}
         if description and description.strip():
             payload["description"] = description.strip()
         with httpx.Client(timeout=20.0) as client:

@@ -18,6 +18,7 @@ import "@xterm/xterm/css/xterm.css";
 
 type TerminalProps = {
   labId: string;
+  accessToken: string;
 
   onProcessExit?: (
     exitCode: number,
@@ -63,6 +64,7 @@ const Terminal = forwardRef<
   function Terminal(
     {
       labId,
+      accessToken,
       onProcessExit,
     },
     ref,
@@ -177,7 +179,7 @@ const Terminal = forwardRef<
     /*
      * Create terminal + WebSocket.
      *
-     * This effect ONLY depends on labId.
+     * This effect reconnects when the Lab or authenticated session changes.
      */
 
     useEffect(() => {
@@ -226,7 +228,7 @@ const Terminal = forwardRef<
 
       const websocket =
         new WebSocket(
-          `ws://127.0.0.1:8000/labs/${labId}/terminal`,
+          `${(import.meta.env.VITE_API_URL as string).replace(/^http/, "ws")}/labs/${labId}/terminal?access_token=${encodeURIComponent(accessToken)}`,
         );
 
 

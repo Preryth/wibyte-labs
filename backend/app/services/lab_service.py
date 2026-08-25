@@ -15,6 +15,36 @@ class LabService:
     def __init__(self):
         self.SessionLocal = SessionLocal
 
+
+    def get_or_create_student(self, user_id: str, email: str | None = None, name: str | None = None) -> Student:
+        """Create or update the local record for a verified Supabase user."""
+        db = self.SessionLocal()
+        try:
+            student = db.get(Student, user_id)
+            if student is None:
+                student = Student(id=user_id, email=email, name=name)
+                db.add(student)
+            else:
+                if email is not None:
+                    student.email = email
+                if name is not None:
+                    student.name = name
+            db.commit()
+            db.refresh(student)
+            return student
+        finally:
+            db.close()
+
+    def get_for_student(self, lab_id: str, student_id: str) -> LabSession | None:
+        db = self.SessionLocal()
+        try:
+            lab = db.get(Lab, lab_id)
+            if lab is None or lab.student_id != student_id:
+                return None
+            return LabSession(id=lab.id, container_id=lab.container_id, status=lab.status, created_at=lab.created_at)
+        finally:
+            db.close()
+
     # =========================================================
     # Development student
     # =========================================================

@@ -10,6 +10,7 @@ from backend.app.services.lab_service import (
     lab_service,
 )
 from backend.app.services.git_service import GitService
+from backend.app.auth import CurrentUser
 
 
 
@@ -53,59 +54,17 @@ GITHUB_FRONTEND_URL = (
 # Start GitHub OAuth
 # =========================================================
 
-@router.get("/connect")
-def github_connect():
-    """
-    Start the GitHub OAuth authorization flow.
-
-    For development we currently use the persistent
-    development student.
-
-    Later this student ID will come from the authenticated
-    WPL user session.
-    """
-
-    student = (
-        lab_service
-        .get_or_create_development_student()
-    )
-
-    # Only one GitHub connection may be active for a student.
-    # The frontend also disables the button, but the backend
-    # must enforce the rule independently.
-    existing_connection = github_service.get_connection(
-        student.id
-    )
-
+@router.post("/connect")
+def github_connect(user: CurrentUser = None):
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
+    existing_connection = github_service.get_connection(student.id)
     if existing_connection is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "A GitHub connection is already active. "
-                "Delete the current connection before "
-                "connecting another GitHub account."
-            ),
-        )
-
+        raise HTTPException(status_code=409, detail="A GitHub connection is already active. Delete the current connection before connecting another GitHub account.")
     try:
-        authorization_url = (
-            github_service
-            .get_authorization_url(
-                student_id=student.id,
-                redirect_uri=GITHUB_CALLBACK_URL,
-            )
-        )
-
+        authorization_url = github_service.get_authorization_url(student_id=student.id, redirect_uri=GITHUB_CALLBACK_URL)
     except RuntimeError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=str(exc),
-        )
-
-    return RedirectResponse(
-        url=authorization_url,
-        status_code=302,
-    )
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"authorization_url": authorization_url}
 
 
 # =========================================================
@@ -231,17 +190,14 @@ def github_callback(
 # =========================================================
 
 @router.get("/status")
-def github_status():
+def github_status(user: CurrentUser):
     """
     Return the current GitHub connection.
 
     Access tokens and refresh tokens are never returned.
     """
 
-    student = (
-        lab_service
-        .get_or_create_development_student()
-    )
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
 
     connection = (
         github_service
@@ -282,7 +238,9 @@ def github_status():
 # =========================================================
 
 @router.delete("/connection")
-def github_disconnect():
+def github_disconnect(
+    user: CurrentUser,
+):
     """
     Delete the student's active GitHub connection.
 
@@ -291,10 +249,7 @@ def github_disconnect():
     or existing Lab records.
     """
 
-    student = (
-        lab_service
-        .get_or_create_development_student()
-    )
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
 
     deleted = github_service.delete_connection(
         student.id
@@ -315,14 +270,15 @@ def github_disconnect():
 
 
 @router.post("/repositories")
-def create_github_repository(request: CreateRepositoryRequest):
-    student = lab_service.get_or_create_development_student()
+def create_github_repository(request: CreateRepositoryRequest,
+    user: CurrentUser = None):
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
     try:
         return github_service.create_repository(
             student_id=student.id,
             name=request.name,
             description=request.description,
-            private=request.private,
+            private=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -331,10 +287,11 @@ def create_github_repository(request: CreateRepositoryRequest):
 
 
 @router.post("/labs/{lab_id}/workspace-repository")
-def ensure_workspace_repository(lab_id: str):
+def ensure_workspace_repository(lab_id: str,
+    user: CurrentUser = None):
     """Create or attach the student's permanent wibyte-workspace repository and clone it into this Lab."""
-    student = lab_service.get_or_create_development_student()
-    session = lab_service.get(lab_id)
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
+    session = lab_service.get_for_student(lab_id, user.id)
     if session is None:
         raise HTTPException(status_code=404, detail="Lab not found")
 
@@ -346,7 +303,7 @@ def ensure_workspace_repository(lab_id: str):
                 student_id=student.id,
                 name="wibyte-workspace",
                 description="WiByte Labs persistent workspace",
-                private=True,
+                private=False,
             )
         repository_id = repository["id"]
         lab_service.attach_github_repository(lab_id, repository_id)
@@ -367,9 +324,8 @@ def ensure_workspace_repository(lab_id: str):
 
 @router.get("/repositories")
 def github_repositories(
-    refresh: bool = Query(
-        default=True
-    ),
+    refresh: bool = Query(default=True),
+    user: CurrentUser = None,
 ):
     """
     Return repositories accessible to the connected
@@ -382,10 +338,7 @@ def github_repositories(
     repository list without contacting GitHub.
     """
 
-    student = (
-        lab_service
-        .get_or_create_development_student()
-    )
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
 
     try:
 
@@ -446,6 +399,7 @@ def github_repositories(
 def github_repository_contents(
     repository_id: str,
     path: str = Query(default=""),
+    user: CurrentUser = None,
 ):
     """
     Browse one directory of a student's GitHub repository.
@@ -453,10 +407,7 @@ def github_repository_contents(
     This is read-only. Editing happens in the Docker workspace
     after the repository has been opened in a Lab.
     """
-    student = (
-        lab_service
-        .get_or_create_development_student()
-    )
+    student = lab_service.get_or_create_student(user.id, user.email, user.name)
 
     try:
         contents = github_service.fetch_repository_contents(
@@ -495,7 +446,9 @@ def github_repository_contents(
 # =========================================================
 
 @router.get("/labs/{lab_id}/git/status")
-def git_status(lab_id: str):
+def git_status(lab_id: str, user: CurrentUser = None):
+    if lab_service.get_for_student(lab_id, user.id) is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
     try:
         return _git_service().status(lab_id)
     except ValueError as exc:
@@ -505,7 +458,9 @@ def git_status(lab_id: str):
 
 
 @router.get("/labs/{lab_id}/git/diff")
-def git_diff(lab_id: str, path: str | None = Query(default=None)):
+def git_diff(lab_id: str, path: str | None = Query(default=None), user: CurrentUser = None):
+    if lab_service.get_for_student(lab_id, user.id) is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
     try:
         return _git_service().diff(lab_id, path)
     except ValueError as exc:
@@ -515,7 +470,9 @@ def git_diff(lab_id: str, path: str | None = Query(default=None)):
 
 
 @router.post("/labs/{lab_id}/git/commit")
-def git_commit(lab_id: str, request: GitCommitRequest):
+def git_commit(lab_id: str, request: GitCommitRequest, user: CurrentUser = None):
+    if lab_service.get_for_student(lab_id, user.id) is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
     try:
         return _git_service().commit(lab_id, request.message)
     except ValueError as exc:
@@ -525,7 +482,9 @@ def git_commit(lab_id: str, request: GitCommitRequest):
 
 
 @router.post("/labs/{lab_id}/git/push")
-def git_push(lab_id: str):
+def git_push(lab_id: str, user: CurrentUser = None):
+    if lab_service.get_for_student(lab_id, user.id) is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
     try:
         return _git_service().push(lab_id)
     except ValueError as exc:
@@ -535,7 +494,9 @@ def git_push(lab_id: str):
 
 
 @router.post("/labs/{lab_id}/git/pull")
-def git_pull(lab_id: str):
+def git_pull(lab_id: str, user: CurrentUser = None):
+    if lab_service.get_for_student(lab_id, user.id) is None:
+        raise HTTPException(status_code=404, detail="Lab not found")
     try:
         return _git_service().pull(lab_id)
     except ValueError as exc:
