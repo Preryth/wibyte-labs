@@ -58,6 +58,11 @@ function LoginScreen() {
     null
   );
 
+  const [
+    canResendConfirmation,
+    setCanResendConfirmation,
+  ] = useState(false);
+
 
   function changeMode(
     nextMode: Mode
@@ -67,6 +72,64 @@ function LoginScreen() {
     setConfirmPassword("");
     setMessage(null);
     setErrorMessage(null);
+    setCanResendConfirmation(false);
+  }
+
+
+  async function handleResendConfirmation() {
+    if (submitting) {
+      return;
+    }
+
+    const normalisedEmail =
+      email.trim().toLowerCase();
+
+    if (!normalisedEmail) {
+      setErrorMessage(
+        "Enter your email address to resend the confirmation email."
+      );
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage(null);
+    setErrorMessage(null);
+    setCanResendConfirmation(false);
+
+    try {
+      const {
+        error,
+      } =
+        await supabase.auth.resend({
+          type: "signup",
+          email: normalisedEmail,
+          options: {
+            emailRedirectTo:
+              window.location.origin,
+          },
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      setMessage(
+        "Confirmation email sent. Check your inbox and spam folder."
+      );
+    } catch (error) {
+      console.error(
+        "Failed to resend confirmation email:",
+        error
+      );
+
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong. Please try again."
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
 
@@ -160,6 +223,7 @@ function LoginScreen() {
             "Account created. Check your email to confirm your address, then sign in."
           );
           setMode("sign-in");
+          setCanResendConfirmation(true);
         } else {
           setMessage(
             "Account created. Your account is awaiting approval."
@@ -336,6 +400,21 @@ function LoginScreen() {
               >
                 Forgot password?
               </button>
+
+              {canResendConfirmation && (
+                <p>
+                  Didn't receive the confirmation email?{" "}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handleResendConfirmation()
+                    }
+                    disabled={submitting}
+                  >
+                    Resend confirmation email
+                  </button>
+                </p>
+              )}
 
               <p>
                 Don't have an account?{" "}
