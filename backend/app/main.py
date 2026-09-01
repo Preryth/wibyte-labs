@@ -237,6 +237,9 @@ def create_lab(user: CurrentUser):
         container = docker_client.containers.run(
             "wpl-student:dev", detach=True, tty=True, stdin_open=True,
             ports={"6080/tcp": None},
+            mem_limit="1g", # 1 GB memory limit
+            nano_cpus=250_000_000,  # 0.25 CPU limit
+            pids_limit=256, # 256 process limit
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to create lab container: {exc}")
