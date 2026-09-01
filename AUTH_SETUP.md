@@ -8,8 +8,8 @@ Authentication -> Providers -> Email:
 - For development, choose whether email confirmation is required. The frontend supports both behaviours.
 
 Authentication -> URL Configuration:
-- Site URL: `http://localhost:5173`
-- Add `http://localhost:5173/**` to Redirect URLs if your dashboard supports wildcard redirect entries.
+- Site URL: `http://200.234.44.47:4173`
+- Add `http://200.234.44.47:4173/**` to Redirect URLs if your dashboard supports wildcard redirect entries.
 
 ## 2. Run the database setup
 
