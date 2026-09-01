@@ -481,7 +481,7 @@ def gui_connection(
             )
 
         url = (
-            f"http://127.0.0.1:{host_port}/vnc.html"
+            f"http://200.234.44.47:{host_port}/vnc.html"
             "?autoconnect=true&resize=scale"
         )
 
