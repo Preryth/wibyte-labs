@@ -10,7 +10,7 @@ class TerminalSession:
     async def read(self):
         try:
             chunk = await asyncio.to_thread(
-                self.docker_socket.recv,
+                self.docker_socket.read,
                 4096,
             )
             return chunk or b""
@@ -44,7 +44,7 @@ class ProcessSession:
     async def read(self):
         try:
             chunk = await asyncio.to_thread(
-                self.docker_socket.recv,
+                self.docker_socket.read,
                 4096,
             )
         except Exception:
