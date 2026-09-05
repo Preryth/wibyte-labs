@@ -3,32 +3,17 @@ import asyncio
 import json
 import shlex
 
-from fastapi import (
-    APIRouter,
-    WebSocket,
-    WebSocketDisconnect,
-)
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from backend.app.services.lab_service import (
-    lab_service,
-)
+from backend.app.services.lab_service import lab_service
 from backend.app.auth import authenticate_token
 
 
 router = APIRouter()
 
 
-def file_uses_tkinter(
-    container,
-    path: str,
-) -> bool:
-    """
-    Inspect a Python source file inside the existing Lab container
-    and determine whether it imports tkinter.
-
-    This keeps GUI detection on the backend and avoids sending the
-    editor contents through the terminal protocol again.
-    """
+def file_uses_tkinter(container, path: str) -> bool:
+    """Inspect a Python source file inside the Lab container."""
     safe_path = shlex.quote(path)
 
     result = container.exec_run(
@@ -44,10 +29,7 @@ def file_uses_tkinter(
     if result.exit_code != 0:
         return False
 
-    source = result.output.decode(
-        "utf-8",
-        errors="replace",
-    )
+    source = result.output.decode("utf-8", errors="replace")
 
     try:
         tree = ast.parse(source)
@@ -65,205 +47,163 @@ def file_uses_tkinter(
 
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-
-            if (
-                module == "tkinter"
-                or module.startswith("tkinter.")
-            ):
+            if module == "tkinter" or module.startswith("tkinter."):
                 return True
 
     return False
 
 
-@router.websocket(
-    "/labs/{lab_id}/terminal"
-)
-async def terminal(
-    websocket: WebSocket,
-    lab_id: str,
-):
+@router.websocket("/labs/{lab_id}/terminal")
+async def terminal(websocket: WebSocket, lab_id: str):
     await websocket.accept()
 
     token = websocket.query_params.get("access_token", "")
     try:
         user = authenticate_token(token)
     except Exception:
-        await websocket.send_json({"type": "error", "message": "Authentication failed"})
+        await websocket.send_json(
+            {"type": "error", "message": "Authentication failed"}
+        )
         await websocket.close(code=1008)
         return
 
     session = lab_service.get_for_student(lab_id, user.id)
-
     if session is None:
         await websocket.send_json(
-            {
-                "type": "error",
-                "message": "Lab not found",
-            }
+            {"type": "error", "message": "Lab not found"}
         )
-
-        await websocket.close()
+        await websocket.close(code=1008)
         return
 
-    terminal_service = (
-        websocket.app.state
-        .terminal_service
-    )
+    terminal_service = websocket.app.state.terminal_service
+    terminal_session = terminal_service.create_session(session.container_id)
 
-    terminal_session = (
-        terminal_service.create_session(
-            session.container_id
-        )
-    )
+    process_session = None
+    process_task = None
 
     async def docker_to_websocket():
         while True:
-            data = (
-                await terminal_session.read()
-            )
-
+            data = await terminal_session.read()
             if not data:
                 break
 
             await websocket.send_json(
                 {
                     "type": "output",
-                    "data": data.decode(
-                        "utf-8",
-                        errors="replace",
-                    ),
+                    "data": data.decode("utf-8", errors="replace"),
                 }
             )
 
-    async def websocket_to_docker():
-        while True:
-            raw_message = (
-                await websocket.receive_text()
+    async def relay_process(process):
+        try:
+            while True:
+                data = await process.read()
+                if data:
+                    await websocket.send_json(
+                        {
+                            "type": "output",
+                            "data": data.decode("utf-8", errors="replace"),
+                        }
+                    )
+                    continue
+
+                if not process.is_running():
+                    break
+
+                await asyncio.sleep(0.05)
+
+            await websocket.send_json(
+                {
+                    "type": "process_exit",
+                    "exit_code": process.exit_code(),
+                }
             )
+        except WebSocketDisconnect:
+            pass
+        finally:
+            process.close()
+
+    async def websocket_to_docker():
+        nonlocal process_session, process_task
+
+        while True:
+            raw_message = await websocket.receive_text()
 
             try:
-                message = json.loads(
-                    raw_message
-                )
-
+                message = json.loads(raw_message)
             except json.JSONDecodeError:
                 await websocket.send_json(
                     {
                         "type": "error",
-                        "message": (
-                            "Invalid terminal "
-                            "message."
-                        ),
+                        "message": "Invalid terminal message.",
                     }
                 )
-
                 continue
 
-            message_type = message.get(
-                "type"
-            )
-
-            # -----------------------------------------
-            # Normal terminal keyboard input
-            # -----------------------------------------
+            message_type = message.get("type")
 
             if message_type == "input":
-                data = message.get(
-                    "data",
-                    "",
-                )
+                data = message.get("data", "")
+                if isinstance(data, str):
+                    await terminal_session.write(data)
+                continue
 
-                if isinstance(
-                    data,
-                    str,
-                ):
-                    await terminal_session.write(
-                        data
-                    )
-
-            # -----------------------------------------
-            # Run file
-            # -----------------------------------------
-
-            elif message_type == "run":
-                path = message.get(
-                    "path",
-                    "",
-                )
-
-                if not isinstance(
-                    path,
-                    str,
-                ):
+            if message_type == "run":
+                path = message.get("path", "")
+                if not isinstance(path, str):
                     await websocket.send_json(
-                        {
-                            "type": "error",
-                            "message": (
-                                "Invalid file "
-                                "path."
-                            ),
-                        }
+                        {"type": "error", "message": "Invalid file path."}
                     )
-
                     continue
 
                 path = path.strip()
-
                 if not path:
                     await websocket.send_json(
-                        {
-                            "type": "error",
-                            "message": (
-                                "No file specified."
-                            ),
-                        }
+                        {"type": "error", "message": "No file specified."}
                     )
-
                     continue
 
-                container = (
-                    terminal_service.docker_client
-                    .containers.get(
-                        session.container_id
-                    )
+                # Only one Run process may own the Run button at a time.
+                if process_session is not None:
+                    if process_session.is_running():
+                        await process_session.write("\x03")
+                        await asyncio.sleep(0.1)
+                    process_session.close()
+                    process_session = None
+
+                container = terminal_service.docker_client.containers.get(
+                    session.container_id
                 )
 
-                uses_tkinter = file_uses_tkinter(
-                    container,
-                    path,
-                )
+                uses_tkinter = file_uses_tkinter(container, path)
+                environment = None
 
                 if uses_tkinter:
-                    gui_service = (
-                        websocket.app.state
-                        .gui_service
-                    )
+                    gui_service = websocket.app.state.gui_service
 
-                    gui_status = gui_service.status(
-                        session.container_id
-                    )
-
-                    if not gui_status["ready"]:
+                    # Starting GUI here makes Run self-contained: a Tkinter
+                    # program cannot fail merely because the user forgot to
+                    # press the GUI button first.
+                    try:
+                        gui_status = await asyncio.to_thread(
+                            gui_service.start,
+                            session.container_id,
+                        )
+                    except Exception as exc:
                         await websocket.send_json(
                             {
-                                "type": "output",
-                                "data": (
-                                    "\r\n"
-                                    "This program requires the GUI environment.\r\n"
-                                    "Click the GUI button to open the desktop environment,\r\n"
-                                    "then run the program again.\r\n"
+                                "type": "error",
+                                "message": (
+                                    "Failed to start the GUI environment: "
+                                    f"{exc}"
                                 ),
                             }
                         )
-
-                        await websocket.send_json(
-                            {
-                                "type": "process_exit",
-                                "exit_code": 1,
-                            }
-                        )
-
                         continue
+
+                    environment = {
+                        "DISPLAY": gui_status["display"],
+                    }
 
                     await websocket.send_json(
                         {
@@ -271,29 +211,28 @@ async def terminal(
                             "data": (
                                 "\r\n"
                                 f"Running {path} in GUI...\r\n"
-                                "Opened in GUI.\r\n"
                             ),
                         }
                     )
 
-                    safe_path = shlex.quote(
-                        path
-                    )
+                safe_path = shlex.quote(path)
+                command = f"python -u -- {safe_path}"
 
-                    command = (
-                        f"DISPLAY={shlex.quote(gui_status['display'])} "
-                        f"python -u {safe_path}\r"
+                try:
+                    process_session = terminal_service.start_process(
+                        session.container_id,
+                        command,
+                        environment=environment,
                     )
-
-                else:
-                    safe_path = shlex.quote(
-                        path
+                except Exception as exc:
+                    process_session = None
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "message": f"Failed to start process: {exc}",
+                        }
                     )
-
-                    command = (
-                        f"python -u "
-                        f"{safe_path}\r"
-                    )
+                    continue
 
                 await websocket.send_json(
                     {
@@ -302,49 +241,47 @@ async def terminal(
                     }
                 )
 
-                await terminal_session.write(
-                    command
+                process_task = asyncio.create_task(
+                    relay_process(process_session)
                 )
+                continue
 
-            # -----------------------------------------
-            # Stop running process
-            # -----------------------------------------
+            if message_type == "stop":
+                await websocket.send_json({"type": "stop_requested"})
 
-            elif message_type == "stop":
-                await websocket.send_json(
-                    {
-                        "type": "stop_requested",
-                    }
-                )
+                if process_session is not None:
+                    await process_session.write("\x03")
+                else:
+                    await terminal_session.write("\x03")
+                continue
 
-                await terminal_session.write(
-                    "\x03"
-                )
-
-            # -----------------------------------------
-            # Unknown message
-            # -----------------------------------------
-
-            else:
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "message": (
-                            "Unknown terminal "
-                            "message type: "
-                            f"{message_type}"
-                        ),
-                    }
-                )
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "message": f"Unknown terminal message type: {message_type}",
+                }
+            )
 
     try:
         await asyncio.gather(
             docker_to_websocket(),
             websocket_to_docker(),
         )
-
     except WebSocketDisconnect:
         pass
-
     finally:
         terminal_session.close()
+
+        if process_session is not None:
+            try:
+                await process_session.write("\x03")
+            except Exception:
+                pass
+            process_session.close()
+
+        if process_task is not None and not process_task.done():
+            process_task.cancel()
+            try:
+                await process_task
+            except asyncio.CancelledError:
+                pass

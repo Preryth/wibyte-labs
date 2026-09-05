@@ -1,27 +1,12 @@
 from __future__ import annotations
 
+import shlex
+
 
 class GuiService:
     """
     Manage the on-demand graphical environment inside an existing
     Wibyte Labs Docker container.
-
-    The Lab container itself is still created by the existing Lab
-    lifecycle. This service never creates another container.
-
-    GUI startup sequence:
-
-        Xvfb :1
-            ↓
-        Fluxbox
-            ↓
-        x11vnc on localhost:5901
-            ↓
-        websockify/noVNC on :6080
-
-    The processes are started only when requested. Because they run
-    inside the existing Lab container, removing that container also
-    removes the GUI environment automatically.
     """
 
     DISPLAY = ":1"
@@ -37,12 +22,6 @@ class GuiService:
         return self.docker_client.containers.get(container_id)
 
     def _process_command(self, container, process_name: str) -> bool:
-        """
-        Check for a process by its executable/command name.
-
-        This avoids relying on pgrep -f patterns containing spaces,
-        regex characters, or argument-order assumptions.
-        """
         result = container.exec_run(
             [
                 "bash",
@@ -54,9 +33,6 @@ class GuiService:
         return result.exit_code == 0
 
     def _is_x11vnc_running(self, container) -> bool:
-        """
-        Check specifically for x11vnc listening on the expected VNC port.
-        """
         result = container.exec_run(
             [
                 "bash",
@@ -72,10 +48,6 @@ class GuiService:
         return result.exit_code == 0
 
     def _is_websockify_running(self, container) -> bool:
-        """
-        Check specifically for websockify listening on the expected
-        noVNC/web port.
-        """
         result = container.exec_run(
             [
                 "bash",
@@ -91,25 +63,21 @@ class GuiService:
         return result.exit_code == 0
 
     def status(self, container_id: str) -> dict:
-        """
-        Return the current GUI-process status for one existing Lab
-        container without starting anything.
-        """
         container = self._get_container(container_id)
         container.reload()
 
-        container_running = (
-            container.attrs.get("State", {}).get("Running", False)
-        )
+        running = container.attrs.get("State", {}).get("Running", False)
 
-        if not container_running:
+        if not running:
             return {
                 "container_running": False,
                 "display": self.DISPLAY,
                 "vnc_port": self.VNC_PORT,
+                "web_port": self.WEB_PORT,
                 "xvfb_running": False,
                 "fluxbox_running": False,
                 "x11vnc_running": False,
+                "websockify_running": False,
                 "ready": False,
             }
 
@@ -135,154 +103,181 @@ class GuiService:
             ),
         }
 
-    def _run_checked(
+    def _start_detached(
         self,
         container,
         command: list[str],
         description: str,
+        log_path: str,
+        environment: dict[str, str] | None = None,
     ) -> None:
-        result = container.exec_run(
-            command,
-            user="student",
-        )
+        """
+        Start a long-lived GUI daemon as a detached Docker exec.
 
-        if result.exit_code != 0:
-            detail = result.output.decode(
-                "utf-8",
-                errors="replace",
-            ).strip()
+        This is more reliable than `nohup ... &` because Docker owns the
+        exec process directly instead of a shell backgrounding a child.
+        """
+        api = container.client.api
 
-            raise RuntimeError(
-                f"{description} failed"
-                + (
-                    f": {detail}"
-                    if detail
-                    else "."
-                )
+        try:
+            quoted_command = " ".join(
+                shlex.quote(part)
+                for part in command
             )
+            shell_command = (
+                f"exec {quoted_command} "
+                f"> {shlex.quote(log_path)} 2>&1"
+            )
+
+            exec_instance = api.exec_create(
+                container.id,
+                cmd=["bash", "-lc", shell_command],
+                stdout=False,
+                stderr=False,
+                stdin=False,
+                tty=False,
+                user="student",
+                environment=environment,
+            )
+            api.exec_start(
+                exec_instance["Id"],
+                detach=True,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"{description} failed: {exc}") from exc
+
+    def _wait_for_display(
+        self,
+        container_id: str,
+        attempts: int = 20,
+        delay_seconds: float = 0.1,
+    ) -> None:
+        import time
+
+        for _ in range(attempts):
+            container = self._get_container(container_id)
+            result = container.exec_run(
+                [
+                    "bash",
+                    "-lc",
+                    f"DISPLAY={shlex.quote(self.DISPLAY)} xdpyinfo >/dev/null 2>&1",
+                ],
+                user="student",
+            )
+            if result.exit_code == 0:
+                return
+            time.sleep(delay_seconds)
+
+        raise RuntimeError(
+            f"X display {self.DISPLAY} did not become ready."
+        )
 
     def _wait_until_ready(
         self,
         container_id: str,
-        attempts: int = 20,
+        attempts: int = 30,
         delay_seconds: float = 0.25,
     ) -> dict:
-        """
-        Poll the service's own status checks until all GUI processes
-        are detected as ready.
-        """
         import time
 
         for _ in range(attempts):
             status = self.status(container_id)
-
             if status["ready"]:
                 return status
-
             time.sleep(delay_seconds)
 
         status = self.status(container_id)
-
         raise RuntimeError(
             "GUI environment did not become ready. "
             f"Current status: {status}"
         )
 
     def start(self, container_id: str) -> dict:
-        """
-        Start the GUI environment inside an existing running Lab.
-
-        The operation is idempotent: calling it again reuses the
-        existing Xvfb/Fluxbox/x11vnc/websockify processes instead of
-        creating duplicates.
-        """
         container = self._get_container(container_id)
         container.reload()
 
-        if not container.attrs.get(
-            "State",
-            {},
-        ).get(
-            "Running",
-            False,
-        ):
-            raise RuntimeError(
-                "Lab container is not running."
-            )
+        if not container.attrs.get("State", {}).get("Running", False):
+            raise RuntimeError("Lab container is not running.")
 
         current = self.status(container_id)
 
         if not current["xvfb_running"]:
-            self._run_checked(
+            self._start_detached(
                 container,
                 [
-                    "bash",
-                    "-lc",
-                    (
-                        f"nohup Xvfb {self.DISPLAY} "
-                        f"-screen 0 {self.SCREEN} "
-                        "-nolisten tcp "
-                        "> /tmp/wpl-xvfb.log 2>&1 &"
-                    ),
+                    "Xvfb",
+                    self.DISPLAY,
+                    "-screen",
+                    "0",
+                    self.SCREEN,
+                    "-nolisten",
+                    "tcp",
                 ],
                 "Starting Xvfb",
+                "/tmp/wpl-xvfb.log",
             )
 
-        current = self.status(container_id)
+        if not self._process_command(container, "Xvfb"):
+            self._wait_for_process(container_id, "Xvfb")
 
-        if not current["fluxbox_running"]:
-            self._run_checked(
+        self._wait_for_display(container_id)
+
+        if not self._process_command(container, "fluxbox"):
+            self._start_detached(
                 container,
-                [
-                    "bash",
-                    "-lc",
-                    (
-                        f"nohup env DISPLAY={self.DISPLAY} fluxbox "
-                        "> /tmp/wpl-fluxbox.log 2>&1 &"
-                    ),
-                ],
+                ["fluxbox"],
                 "Starting Fluxbox",
+                "/tmp/wpl-fluxbox.log",
+                environment={"DISPLAY": self.DISPLAY},
             )
 
-        current = self.status(container_id)
-
-        if not current["x11vnc_running"]:
-            self._run_checked(
+        if not self._is_x11vnc_running(container):
+            self._start_detached(
                 container,
                 [
-                    "bash",
-                    "-lc",
-                    (
-                        "nohup x11vnc "
-                        f"-display {self.DISPLAY} "
-                        "-forever "
-                        "-shared "
-                        "-nopw "
-                        "-localhost "
-                        f"-rfbport {self.VNC_PORT} "
-                        "> /tmp/wpl-x11vnc.log 2>&1 &"
-                    ),
+                    "x11vnc",
+                    "-display",
+                    self.DISPLAY,
+                    "-forever",
+                    "-shared",
+                    "-nopw",
+                    "-localhost",
+                    "-rfbport",
+                    str(self.VNC_PORT),
                 ],
                 "Starting x11vnc",
+                "/tmp/wpl-x11vnc.log",
             )
 
-        current = self.status(container_id)
-
-        if not current["websockify_running"]:
-            self._run_checked(
+        if not self._is_websockify_running(container):
+            self._start_detached(
                 container,
                 [
-                    "bash",
-                    "-lc",
-                    (
-                        "nohup websockify "
-                        f"--web {self.NOVNC_WEB_ROOT} "
-                        f"{self.WEB_PORT} "
-                        f"127.0.0.1:{self.VNC_PORT} "
-                        "> /tmp/wpl-websockify.log 2>&1 &"
-                    ),
+                    "websockify",
+                    "--web",
+                    self.NOVNC_WEB_ROOT,
+                    str(self.WEB_PORT),
+                    f"127.0.0.1:{self.VNC_PORT}",
                 ],
                 "Starting websockify/noVNC",
+                "/tmp/wpl-websockify.log",
             )
 
         return self._wait_until_ready(container_id)
+
+    def _wait_for_process(
+        self,
+        container_id: str,
+        process_name: str,
+        attempts: int = 10,
+        delay_seconds: float = 0.1,
+    ) -> None:
+        import time
+
+        for _ in range(attempts):
+            container = self._get_container(container_id)
+            if self._process_command(container, process_name):
+                return
+            time.sleep(delay_seconds)
+
+        raise RuntimeError(f"{process_name} did not start.")

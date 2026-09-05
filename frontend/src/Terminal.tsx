@@ -186,6 +186,10 @@ const Terminal = forwardRef<
       const element =
         terminalElementRef.current;
 
+      if (!labId || !accessToken) {
+        return;
+      }
+
       if (!element) {
         return;
       }
@@ -485,7 +489,7 @@ const Terminal = forwardRef<
         terminal.dispose();
       };
 
-    }, [labId]);
+    }, [labId, accessToken]);
 
 
     return (
