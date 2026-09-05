@@ -13,11 +13,10 @@ class TerminalSession:
                 self.docker_socket.recv,
                 4096,
             )
-        except Exception:
-            return b""
-
-        return chunk or b""
-
+            return chunk or b""
+        except Exception as exc:
+            print(f"[ProcessSession] Docker socket read error: {exc!r}", flush=True)
+            raise
     async def write(self, data: str):
         try:
             await asyncio.to_thread(
