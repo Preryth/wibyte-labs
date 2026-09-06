@@ -8,6 +8,7 @@ RUN apt-get update \
         python3-tk \
         xvfb \
         fluxbox \
+        feh \
         x11vnc \
         x11-xserver-utils \
         x11-utils \

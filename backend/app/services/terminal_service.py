@@ -15,16 +15,24 @@ class TerminalSession:
             )
             return chunk or b""
         except Exception as exc:
-            print(f"[ProcessSession] Docker socket read error: {exc!r}", flush=True)
+            print(
+                f"[TerminalSession] Docker socket read error: {exc!r}",
+                flush=True,
+            )
             raise
+
     async def write(self, data: str):
         try:
             await asyncio.to_thread(
-                self.docker_socket.send,
+                self.docker_socket.write,
                 data.encode("utf-8"),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(
+                f"[TerminalSession] Docker socket write error: {exc!r}",
+                flush=True,
+            )
+            raise
 
     def close(self):
         try:
@@ -47,19 +55,26 @@ class ProcessSession:
                 self.docker_socket.read,
                 4096,
             )
-        except Exception:
-            return b""
-
-        return chunk or b""
+            return chunk or b""
+        except Exception as exc:
+            print(
+                f"[ProcessSession] Docker socket read error: {exc!r}",
+                flush=True,
+            )
+            raise
 
     async def write(self, data: str):
         try:
             await asyncio.to_thread(
-                self.docker_socket.send,
+                self.docker_socket.write,
                 data.encode("utf-8"),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(
+                f"[ProcessSession] Docker socket write error: {exc!r}",
+                flush=True,
+            )
+            raise
 
     def is_running(self) -> bool:
         try:
@@ -98,7 +113,7 @@ class TerminalService:
 
         exec_instance = container.client.api.exec_create(
             container.id,
-            cmd=["bash"],
+            cmd=["bash", "-i"],
             stdin=True,
             stdout=True,
             stderr=True,

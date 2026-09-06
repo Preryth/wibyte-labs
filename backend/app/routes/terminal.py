@@ -95,6 +95,8 @@ async def terminal(websocket: WebSocket, lab_id: str):
             )
 
     async def relay_process(process):
+        nonlocal process_session, process_task
+
         try:
             while True:
                 data = await process.read()
@@ -120,8 +122,23 @@ async def terminal(websocket: WebSocket, lab_id: str):
             )
         except WebSocketDisconnect:
             pass
+        except Exception as exc:
+            print(f"[terminal] Process relay error: {exc!r}", flush=True)
+            try:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "message": f"Process output error: {exc}",
+                    }
+                )
+            except Exception:
+                pass
         finally:
             process.close()
+            if process_session is process:
+                process_session = None
+            if process_task is asyncio.current_task():
+                process_task = None
 
     async def websocket_to_docker():
         nonlocal process_session, process_task
@@ -165,11 +182,30 @@ async def terminal(websocket: WebSocket, lab_id: str):
 
                 # Only one Run process may own the Run button at a time.
                 if process_session is not None:
-                    if process_session.is_running():
-                        await process_session.write("\x03")
+                    old_process = process_session
+                    old_task = process_task
+
+                    if old_process.is_running():
+                        try:
+                            await old_process.write("\x03")
+                        except Exception as exc:
+                            print(
+                                f"[terminal] Failed to stop previous process: {exc!r}",
+                                flush=True,
+                            )
                         await asyncio.sleep(0.1)
-                    process_session.close()
+
+                    old_process.close()
                     process_session = None
+
+                    if old_task is not None and not old_task.done():
+                        old_task.cancel()
+                        try:
+                            await old_task
+                        except asyncio.CancelledError:
+                            pass
+
+                    process_task = None
 
                 container = terminal_service.docker_client.containers.get(
                     session.container_id
@@ -181,12 +217,9 @@ async def terminal(websocket: WebSocket, lab_id: str):
                 if uses_tkinter:
                     gui_service = websocket.app.state.gui_service
 
-                    # Starting GUI here makes Run self-contained: a Tkinter
-                    # program cannot fail merely because the user forgot to
-                    # press the GUI button first.
                     try:
                         gui_status = await asyncio.to_thread(
-                            gui_service.start,
+                            gui_service.status,
                             session.container_id,
                         )
                     except Exception as exc:
@@ -194,8 +227,20 @@ async def terminal(websocket: WebSocket, lab_id: str):
                             {
                                 "type": "error",
                                 "message": (
-                                    "Failed to start the GUI environment: "
+                                    "Failed to check the GUI environment: "
                                     f"{exc}"
+                                ),
+                            }
+                        )
+                        continue
+
+                    if not gui_status["ready"]:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": (
+                                    "This program uses Tkinter. "
+                                    "Open the GUI first, then run the program."
                                 ),
                             }
                         )
