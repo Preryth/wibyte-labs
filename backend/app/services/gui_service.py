@@ -222,6 +222,28 @@ class GuiService:
 
         self._wait_for_display(container_id)
 
+        # Persist a plain black desktop across Fluxbox restarts.
+        background_config = container.exec_run(
+            [
+                "bash",
+                "-lc",
+                r"""
+set -e
+command -v xsetroot >/dev/null
+mkdir -p "$HOME/.fluxbox"
+touch "$HOME/.fluxbox/init"
+sed -i '/^[[:space:]]*session\.screen0\.rootCommand:/d' "$HOME/.fluxbox/init"
+printf '%s\n' 'session.screen0.rootCommand: xsetroot -solid black' >> "$HOME/.fluxbox/init"
+""",
+            ],
+            user="student",
+        )
+        if background_config.exit_code != 0:
+            raise RuntimeError(
+                "Failed to configure desktop background: "
+                + background_config.output.decode("utf-8", errors="replace")
+            )
+
         if not self._process_command(container, "fluxbox"):
             self._start_detached(
                 container,
@@ -263,7 +285,20 @@ class GuiService:
                 "/tmp/wpl-websockify.log",
             )
 
-        return self._wait_until_ready(container_id)
+        ready = self._wait_until_ready(container_id)
+
+        background = container.exec_run(
+            ["xsetroot", "-solid", "black"],
+            user="student",
+            environment={"DISPLAY": self.DISPLAY},
+        )
+        if background.exit_code != 0:
+            raise RuntimeError(
+                "Failed to set desktop background: "
+                + background.output.decode("utf-8", errors="replace")
+            )
+
+        return ready
 
     def _wait_for_process(
         self,
@@ -281,3 +316,4 @@ class GuiService:
             time.sleep(delay_seconds)
 
         raise RuntimeError(f"{process_name} did not start.")
+

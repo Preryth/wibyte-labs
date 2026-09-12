@@ -114,6 +114,10 @@ async def terminal(websocket: WebSocket, lab_id: str):
 
                 await asyncio.sleep(0.05)
 
+            if process_session is process:
+                process_session = None
+                await terminal_session.write("\x03")
+
             await websocket.send_json(
                 {
                     "type": "process_exit",
@@ -162,7 +166,8 @@ async def terminal(websocket: WebSocket, lab_id: str):
             if message_type == "input":
                 data = message.get("data", "")
                 if isinstance(data, str):
-                    await terminal_session.write(data)
+                    target = process_session or terminal_session
+                    await target.write(data)
                 continue
 
             if message_type == "run":
@@ -295,7 +300,7 @@ async def terminal(websocket: WebSocket, lab_id: str):
                 await websocket.send_json({"type": "stop_requested"})
 
                 if process_session is not None:
-                    await process_session.write("\x03")
+                    await process_session.stop()
                 else:
                     await terminal_session.write("\x03")
                 continue
