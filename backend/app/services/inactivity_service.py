@@ -1,247 +1,143 @@
 import asyncio
+import logging
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import docker
 
-from backend.app.db.database import SessionLocal
-from backend.app.models.lab_db import Lab
-from backend.app.services.lab_service import lab_service
+from backend.app.db.database import engine
+
+log = logging.getLogger(__name__)
 
 
 class InactivityService:
-    """
-    Handles automatic cleanup of inactive labs.
-
-    Current safety rule:
-
-    A lab is only automatically deleted when:
-        1. It has been inactive for at least 30 minutes.
-        2. Its /workspace directory is empty.
-
-    The second condition is temporary.
-
-    Once GitHub integration exists, this will be replaced
-    with proper saved / unsaved / pushed-work detection.
-    """
+    """Remove registered labs after 30 minutes without user input."""
 
     INACTIVITY_TIMEOUT = timedelta(minutes=30)
 
-    def __init__(
-        self,
-        docker_client: docker.DockerClient,
-    ):
+    def __init__(self, docker_client, db_path=None):
         self.docker_client = docker_client
+        self.db_path = db_path or engine.url.database
 
-    # ---------------------------------------------------------
-    # Check whether a container's workspace is empty
-    # ---------------------------------------------------------
+    @staticmethod
+    def as_utc(value):
+        result = datetime.fromisoformat(value)
+        if result.tzinfo is None:
+            result = result.replace(tzinfo=timezone.utc)
+        return result.astimezone(timezone.utc)
 
-    def workspace_is_empty(
-        self,
-        container_id: str,
-    ) -> bool:
-        try:
-            container = (
-                self.docker_client.containers.get(
-                    container_id
-                )
+    def gui_last_activity(self, container):
+        if container.status != "running":
+            return None
+
+        result = container.exec_run(
+            [
+                "sh", "-lc",
+                "pgrep -x Xvfb >/dev/null; state=$?; "
+                'if [ "$state" -eq 1 ]; then echo NO_GUI; '
+                'elif [ "$state" -ne 0 ]; then exit "$state"; '
+                "else DISPLAY=:1 timeout 3s xprintidle; fi",
+            ],
+            user="student",
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(
+                "Cannot measure GUI activity: "
+                + result.output.decode("utf-8", errors="replace")
             )
 
-            result = container.exec_run(
-                [
-                    "bash",
-                    "-lc",
+        output = result.output.decode().strip()
+        if output == "NO_GUI":
+            return None
+
+        idle_ms = int(output)
+        if idle_ms < 0:
+            raise RuntimeError("Invalid GUI idle time")
+        return datetime.now(timezone.utc) - timedelta(milliseconds=idle_ms)
+
+    def cleanup_lab(self, lab_id, container_id):
+        try:
+            container = self.docker_client.containers.get(container_id)
+        except docker.errors.NotFound:
+            container = None
+
+        # A measurement failure preserves the lab and gets logged/retried.
+        gui_activity = (
+            self.gui_last_activity(container) if container is not None else None
+        )
+
+        db = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            # Serialize the final decision with activity updates.
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT container_id, status, last_activity_at "
+                "FROM labs WHERE id = ?",
+                (lab_id,),
+            ).fetchone()
+
+            if row is None or row[0] != container_id or row[1] != "running":
+                return False
+
+            last_activity = self.as_utc(row[2])
+            if gui_activity is not None and gui_activity > last_activity:
+                last_activity = gui_activity
+                db.execute(
+                    "UPDATE labs SET last_activity_at = ? WHERE id = ?",
                     (
-                        "if find /workspace "
-                        "-mindepth 1 "
-                        "-maxdepth 1 "
-                        "-print -quit | "
-                        "grep -q .; "
-                        "then "
-                        "exit 1; "
-                        "else "
-                        "exit 0; "
-                        "fi"
+                        last_activity.replace(tzinfo=None).isoformat(" "),
+                        lab_id,
                     ),
-                ]
-            )
+                )
 
-            return result.exit_code == 0
+            cutoff = datetime.now(timezone.utc) - self.INACTIVITY_TIMEOUT
+            if last_activity > cutoff:
+                db.commit()
+                return False
 
-        except docker.errors.NotFound:
-            # If the container is already gone, there is
-            # nothing left to preserve.
+            if container is not None:
+                try:
+                    container.remove(force=True)
+                except docker.errors.NotFound:
+                    pass
+
+            # Only remove the record after Docker deletion succeeds.
+            db.execute("DELETE FROM labs WHERE id = ?", (lab_id,))
+            db.commit()
+            log.warning("Removed inactive lab %s (%s)", lab_id, container_id[:12])
             return True
-
         except Exception:
-            # Fail closed.
-            #
-            # If we cannot determine the workspace state,
-            # NEVER automatically delete the lab.
-            return False
-
-    # ---------------------------------------------------------
-    # Delete one inactive lab
-    # ---------------------------------------------------------
-
-    def cleanup_lab(
-        self,
-        lab_id: str,
-        container_id: str,
-    ) -> bool:
-        """
-        Attempt to safely remove one inactive lab.
-
-        Returns True if the lab was removed.
-        Returns False if it was preserved.
-        """
-
-        # -----------------------------------------------------
-        # Safety check: workspace must be empty.
-        # -----------------------------------------------------
-
-        if not self.workspace_is_empty(
-            container_id
-        ):
-            return False
-
-        # -----------------------------------------------------
-        # Remove Docker container.
-        # -----------------------------------------------------
-
-        try:
-            container = (
-                self.docker_client.containers.get(
-                    container_id
-                )
-            )
-
-            container.remove(
-                force=True
-            )
-
-        except docker.errors.NotFound:
-            pass
-
-        except Exception:
-            # If Docker deletion fails, don't remove the
-            # database record. That would leave the system
-            # inconsistent.
-            return False
-
-        # -----------------------------------------------------
-        # Remove database record.
-        # -----------------------------------------------------
-
-        removed = lab_service.remove(
-            lab_id
-        )
-
-        return removed is not None
-
-    # ---------------------------------------------------------
-    # Find and clean inactive labs
-    # ---------------------------------------------------------
-
-    def cleanup_inactive_labs(self) -> int:
-        """
-        Find inactive labs and safely remove them.
-
-        Returns the number of labs removed.
-        """
-
-        now = datetime.now(
-            timezone.utc
-        )
-
-        cutoff = (
-            now -
-            self.INACTIVITY_TIMEOUT
-        )
-
-        db = SessionLocal()
-
-        try:
-            labs = (
-                db.query(Lab)
-                .filter(
-                    Lab.status == "running",
-                    Lab.last_activity_at <= cutoff,
-                )
-                .all()
-            )
-
-            # Copy only the information we need before
-            # closing the database session.
-            inactive_labs = [
-                (
-                    lab.id,
-                    lab.container_id,
-                )
-                for lab in labs
-            ]
-
+            db.rollback()
+            raise
         finally:
             db.close()
 
-        removed_count = 0
+    def cleanup_inactive_labs(self):
+        db = sqlite3.connect(self.db_path, timeout=30)
+        try:
+            rows = db.execute(
+                "SELECT id, container_id, last_activity_at "
+                "FROM labs WHERE status = 'running'"
+            ).fetchall()
+        finally:
+            db.close()
 
-        for (
-            lab_id,
-            container_id,
-        ) in inactive_labs:
-
-            removed = self.cleanup_lab(
-                lab_id,
-                container_id,
-            )
-
-            if removed:
-                removed_count += 1
-
-        return removed_count
-
-    # ---------------------------------------------------------
-    # Background worker
-    # ---------------------------------------------------------
+        cutoff = datetime.now(timezone.utc) - self.INACTIVITY_TIMEOUT
+        removed = 0
+        for lab_id, container_id, timestamp in rows:
+            try:
+                if self.as_utc(timestamp) <= cutoff:
+                    removed += int(self.cleanup_lab(lab_id, container_id))
+            except Exception:
+                log.exception("Cleanup failed for lab %s; will retry", lab_id)
+        return removed
 
     async def run_forever(self):
-        """
-        Continuously check for inactive labs.
-
-        The worker checks once every 60 seconds.
-        """
-
         while True:
-
             try:
-                removed_count = await asyncio.to_thread(
-                    self.cleanup_inactive_labs
-                )
-
-                if removed_count:
-                    print(
-                        "[InactivityService] "
-                        f"Removed {removed_count} "
-                        "inactive lab(s)."
-                    )
-
+                await asyncio.to_thread(self.cleanup_inactive_labs)
             except asyncio.CancelledError:
-                print(
-                    "[InactivityService] "
-                    "Worker stopped."
-                )
-
                 raise
-
-            except Exception as exc:
-                # The worker must never die because of one
-                # unexpected exception.
-                print(
-                    "[InactivityService] "
-                    f"Cleanup error: {exc}"
-                )
-
-            await asyncio.sleep(
-                60
-            )
+            except Exception:
+                log.exception("Inactivity scan failed; will retry")
+            await asyncio.sleep(60)

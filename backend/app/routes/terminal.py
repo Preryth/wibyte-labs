@@ -146,6 +146,7 @@ async def terminal(websocket: WebSocket, lab_id: str):
 
     async def websocket_to_docker():
         nonlocal process_session, process_task
+        last_activity_recorded = float('-inf')
 
         while True:
             raw_message = await websocket.receive_text()
@@ -162,6 +163,22 @@ async def terminal(websocket: WebSocket, lab_id: str):
                 continue
 
             message_type = message.get("type")
+
+            meaningful_input = (
+                message_type == "input"
+                and isinstance(message.get("data"), str)
+                and bool(message["data"])
+            )
+            if meaningful_input or message_type in {"run", "stop"}:
+                now = asyncio.get_running_loop().time()
+                if now - last_activity_recorded >= 10:
+                    updated = await asyncio.to_thread(
+                        lab_service.update_activity, lab_id
+                    )
+                    if not updated:
+                        await websocket.close(code=1008)
+                        return
+                    last_activity_recorded = now
 
             if message_type == "input":
                 data = message.get("data", "")

@@ -12,6 +12,7 @@ RUN apt-get update \
         x11vnc \
         x11-xserver-utils \
         x11-utils \
+        xprintidle \
         xauth \
         xterm \
         novnc \

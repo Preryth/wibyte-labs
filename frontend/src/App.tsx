@@ -456,6 +456,29 @@ function LabApp({
   }, [labId]);
 
 
+  // User interaction counts as activity; an open idle tab does not.
+  useEffect(() => {
+    if (!labId) return;
+
+    const events = ["keydown", "pointerdown", "pointermove", "wheel"];
+    const record = (event: Event) => {
+      if (event.isTrusted) handleEditorActivity();
+    };
+
+    for (const event of events) {
+      document.addEventListener(event, record, {
+        capture: true,
+        passive: true,
+      });
+    }
+
+    return () => {
+      for (const event of events) {
+        document.removeEventListener(event, record, true);
+      }
+    };
+  }, [labId, handleEditorActivity]);
+
   /*
    * Backend health check
    */
