@@ -410,7 +410,7 @@ class GitHubService:
         db = self.SessionLocal()
 
         try:
-            db.merge(connection)
+            connection = db.merge(connection)
             db.commit()
 
             db.refresh(connection)

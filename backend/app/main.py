@@ -1,3 +1,5 @@
+from fastapi import Response
+from backend.app.routes.gui_proxy import router as gui_proxy_router, issue_gui_url
 import asyncio
 import docker
 from dotenv import load_dotenv
@@ -138,6 +140,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://labs.wibyte.in",
         "http://200.234.44.47:4173",
     ],
     allow_credentials=True,
@@ -190,6 +193,7 @@ app.state.git_service = (
 app.include_router(
     terminal_router
 )
+app.include_router(gui_proxy_router)
 
 workspace_router.workspace_service = (
     workspace_service
@@ -236,7 +240,7 @@ def create_lab(user: CurrentUser):
     try:
         container = docker_client.containers.run(
             "wpl-student:dev", detach=True, tty=True, stdin_open=True,
-            ports={"6080/tcp": None},
+            ports={"6080/tcp": ("127.0.0.1", 0)},
             mem_limit="1g", # 1 GB memory limit
             nano_cpus=250_000_000,  # 0.25 CPU limit
             pids_limit=256, # 256 process limit
@@ -411,7 +415,8 @@ def start_gui(
 )
 def gui_connection(
     lab_id: str,
-    user: CurrentUser):
+    user: CurrentUser,
+    response: Response):
     """
     Return the browser URL for this Lab's noVNC server.
 
@@ -477,10 +482,7 @@ def gui_connection(
                 "GUI web port does not have a host binding."
             )
 
-        url = (
-            f"http://200.234.44.47:{host_port}/vnc.html"
-            "?autoconnect=true&resize=scale"
-        )
+        url = issue_gui_url(response, lab_id, user.id)
 
         return {
             "lab_id": lab_id,
@@ -506,6 +508,7 @@ def gui_connection(
                 f"{exc}"
             ),
         )
+
 
 
 # ---------------------------------------------------------

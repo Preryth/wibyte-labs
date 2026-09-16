@@ -44,9 +44,15 @@ class TerminalSession:
         except OSError:
             pass
         try:
-            self._socket_wrapper.close()
+            response = getattr(self._socket_wrapper, "_response", None)
+            if response is not None:
+                response.close()
+                self._socket_wrapper._response = None
         finally:
-            self.docker_socket.close()
+            try:
+                self._socket_wrapper.close()
+            finally:
+                self.docker_socket.close()
 
 
 class ProcessSession:
@@ -109,9 +115,15 @@ class ProcessSession:
         except OSError:
             pass
         try:
-            self._socket_wrapper.close()
+            response = getattr(self._socket_wrapper, "_response", None)
+            if response is not None:
+                response.close()
+                self._socket_wrapper._response = None
         finally:
-            self.docker_socket.close()
+            try:
+                self._socket_wrapper.close()
+            finally:
+                self.docker_socket.close()
 
         try:
             self.container.exec_run(

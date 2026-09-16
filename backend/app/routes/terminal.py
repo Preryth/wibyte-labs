@@ -57,9 +57,20 @@ def file_uses_tkinter(container, path: str) -> bool:
 async def terminal(websocket: WebSocket, lab_id: str):
     await websocket.accept()
 
-    token = websocket.query_params.get("access_token", "")
     try:
-        user = authenticate_token(token)
+        message = await asyncio.wait_for(
+            websocket.receive_json(), timeout=10
+        )
+        if not isinstance(message, dict):
+            raise ValueError("Invalid authentication message")
+        token = message.get("access_token")
+        if (
+            message.get("type") != "authenticate"
+            or not isinstance(token, str)
+            or not token
+        ):
+            raise ValueError("Authentication required")
+        user = await asyncio.to_thread(authenticate_token, token)
     except Exception:
         await websocket.send_json(
             {"type": "error", "message": "Authentication failed"}

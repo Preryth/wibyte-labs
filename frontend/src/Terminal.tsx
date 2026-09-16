@@ -232,7 +232,7 @@ const Terminal = forwardRef<
 
       const websocket =
         new WebSocket(
-          `${(import.meta.env.VITE_API_URL as string).replace(/^http/, "ws")}/labs/${labId}/terminal?access_token=${encodeURIComponent(accessToken)}`,
+          `${(import.meta.env.VITE_API_URL as string).replace(/^http/, "ws")}/labs/${labId}/terminal`,
         );
 
 
@@ -248,6 +248,11 @@ const Terminal = forwardRef<
 
 
       websocket.onopen = () => {
+        websocket.send(JSON.stringify({
+          type: "authenticate",
+          access_token: accessToken,
+        }));
+
         terminal.write(
           "\r\nConnected to WPL terminal.\r\n",
         );
