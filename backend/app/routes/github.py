@@ -42,11 +42,11 @@ def _git_service() -> GitService:
 # =========================================================
 
 GITHUB_CALLBACK_URL = (
-    "http://127.0.0.1:8000/github/callback"
+    "http://200.234.44.47:8000/github/callback"
 )
 
 GITHUB_FRONTEND_URL = (
-    "http://localhost:5173"
+    "http://200.234.44.47:4173"
 )
 
 
