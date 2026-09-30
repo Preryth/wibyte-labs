@@ -99,6 +99,7 @@ function LabApp({
     "Checking backend..."
   );
 
+  const [editorWidth, setEditorWidth] = useState(60);
   const [accessToken, setAccessToken] = useState("");
 
   useEffect(() => {
@@ -2476,7 +2477,12 @@ useEffect(() => {
 
     </aside>
 
-    <section className="editor-terminal">
+    <section
+      className="editor-terminal"
+      style={{
+        gridTemplateColumns: `minmax(0, ${editorWidth}fr) 8px minmax(0, ${100 - editorWidth}fr)`,
+      }}
+    >
       <div className="editor-section">
         <div className="editor-header">
           <span>
@@ -2564,6 +2570,51 @@ useEffect(() => {
           )}
         </div>
       </div>
+
+      <div
+        className="panel-divider"
+        role="separator"
+        aria-label="Resize code and terminal panels"
+        aria-orientation="vertical"
+        aria-valuemin={30}
+        aria-valuemax={70}
+        aria-valuenow={Math.round(editorWidth)}
+        tabIndex={0}
+        title="Drag to resize; double-click to reset"
+        onPointerDown={(event) => {
+          if (event.button !== 0 || !event.isPrimary) return;
+          event.preventDefault();
+          event.currentTarget.focus();
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+          if (!bounds || bounds.width <= 8) return;
+          const width = ((event.clientX - bounds.left - 4) / (bounds.width - 8)) * 100;
+          setEditorWidth(Math.max(30, Math.min(70, width)));
+        }}
+        onPointerUp={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onPointerCancel={(event) => {
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onDoubleClick={() => setEditorWidth(60)}
+        onKeyDown={(event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+          event.preventDefault();
+          setEditorWidth((width) =>
+            event.key === "Home" ? 30 :
+            event.key === "End" ? 70 :
+            Math.max(30, Math.min(70, width + (event.key === "ArrowRight" ? 2 : -2)))
+          );
+        }}
+      />
 
       <div className="terminal-section">
         <div className="panel-title">

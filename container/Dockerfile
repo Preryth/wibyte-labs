@@ -20,6 +20,8 @@ RUN apt-get update \
         procps \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python -m pip install --no-cache-dir colorama pyfiglet
+
 RUN useradd --create-home --shell /bin/bash student \
     && chown -R student:student /workspace
 

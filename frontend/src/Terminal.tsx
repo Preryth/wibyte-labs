@@ -203,7 +203,7 @@ const Terminal = forwardRef<
         new XTerm({
           cursorBlink: true,
           fontSize: 14,
-          convertEol: true,
+          convertEol: false,
           scrollback: 5000,
         });
 

@@ -39,15 +39,14 @@ def file_uses_tkinter(container, path: str) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             if any(
-                alias.name == "tkinter"
-                or alias.name.startswith("tkinter.")
+                alias.name.split(".")[0] in {"tkinter", "turtle"}
                 for alias in node.names
             ):
                 return True
 
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if module == "tkinter" or module.startswith("tkinter."):
+            if module.split(".")[0] in {"tkinter", "turtle"}:
                 return True
 
     return False
@@ -252,7 +251,7 @@ async def terminal(websocket: WebSocket, lab_id: str):
 
                     try:
                         gui_status = await asyncio.to_thread(
-                            gui_service.status,
+                            gui_service.start,
                             session.container_id,
                         )
                     except Exception as exc:
@@ -260,7 +259,7 @@ async def terminal(websocket: WebSocket, lab_id: str):
                             {
                                 "type": "error",
                                 "message": (
-                                    "Failed to check the GUI environment: "
+                                    "Failed to start the GUI environment: "
                                     f"{exc}"
                                 ),
                             }
@@ -272,7 +271,7 @@ async def terminal(websocket: WebSocket, lab_id: str):
                             {
                                 "type": "error",
                                 "message": (
-                                    "This program uses Tkinter. "
+                                    "This program uses Turtle or Tkinter. "
                                     "Open the GUI first, then run the program."
                                 ),
                             }
@@ -288,7 +287,7 @@ async def terminal(websocket: WebSocket, lab_id: str):
                             "type": "output",
                             "data": (
                                 "\r\n"
-                                f"Running {path} in GUI...\r\n"
+                                f"Running {path}. Open the GUI to see its window.\r\n"
                             ),
                         }
                     )

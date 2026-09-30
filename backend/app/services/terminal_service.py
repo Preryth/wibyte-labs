@@ -184,6 +184,7 @@ class TerminalService:
         exec_instance = container.client.api.exec_create(
             container.id,
             cmd=["bash", "-i"],
+            environment={"DISPLAY": ":1"},
             stdin=True,
             stdout=True,
             stderr=True,

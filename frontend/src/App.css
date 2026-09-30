@@ -295,3 +295,48 @@ button:disabled { cursor: not-allowed; opacity: .46; }
   .workspace-item-actions,
   .file-actions { opacity: 1; }
 }
+
+/* GUI5: resizable code and terminal */
+.editor-terminal {
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+.panel-divider {
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  background: var(--border);
+}
+.panel-divider:hover,
+.panel-divider:focus-visible {
+  background: var(--accent);
+}
+.panel-divider:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: -2px;
+}
+.editor-terminal > .terminal-section {
+  border-top: none;
+  overflow: hidden;
+}
+.editor-terminal .editor-header {
+  height: auto;
+  min-height: 42px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+}
+.editor-terminal .editor-actions {
+  flex-wrap: wrap;
+  flex-shrink: 1;
+}
+@media (max-width: 1000px) {
+  .editor-terminal {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 62fr) minmax(0, 38fr);
+  }
+  .panel-divider { display: none; }
+  .editor-terminal > .terminal-section {
+    border-top: 1px solid var(--border);
+  }
+}
