@@ -143,6 +143,8 @@ function LabApp({
   );
 
   const [editorWidth, setEditorWidth] = useState(60);
+  const [sidebarWidth, setSidebarWidth] = useState(310);
+
 
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
@@ -206,6 +208,19 @@ function LabApp({
   const gitActionBusyRef = useRef(false);
   const gitActionVersionRef = useRef(0);
   const gitStatusPollingRef = useRef(false);
+
+  const [labConflictIds, setLabConflictIds] = useState<string[] | null>(null);
+  const [labNotice, setLabNotice] = useState<string | null>(null);
+  const labConflictDialogRef = useRef<HTMLDialogElement | null>(null);
+  const labCreationBusyRef = useRef(false);
+
+  useEffect(() => {
+    const dialog = labConflictDialogRef.current;
+    if (!dialog) return;
+    if (labConflictIds && !dialog.open) dialog.showModal();
+    if (!labConflictIds && dialog.open) dialog.close();
+  }, [labConflictIds]);
+
   const [accessToken, setAccessToken] = useState("");
 
   useEffect(() => {
@@ -349,6 +364,48 @@ function LabApp({
 
   /* Prevent Git status polling errors while a Lab is intentionally closing. */
   const closingLabRef = useRef(false);
+  useEffect(() => {
+    if (!labId) return;
+    let cancelled = false;
+    let checking = false;
+
+    async function checkLabSession() {
+      if (checking || closingLabRef.current) return;
+      checking = true;
+      try {
+        const response = await apiFetch(`${API_URL}/labs/${labId}/session`);
+        if (response.status === 404 && !cancelled && !closingLabRef.current) {
+          closingLabRef.current = true;
+          setLabId(null);
+          setActiveGitHubRepositoryId(null);
+          setFiles([]);
+          setSelectedFile(null);
+          setFileContent("");
+          setRunning(false);
+          setGitStatus(null);
+          setGitDiff(null);
+          setExpandedWorkspaceDirectories({});
+          setWorkspaceDirectories({});
+          setLabNotice(
+            "This lab has closed or was replaced from another tab or device. You can close this tab or create a lab here."
+          );
+        }
+      } catch (error) {
+        console.warn("Could not check lab session:", error);
+      } finally {
+        checking = false;
+      }
+    }
+
+    void checkLabSession();
+    const timer = window.setInterval(() => void checkLabSession(), 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [labId]);
+
+
 
 
   /*
@@ -724,12 +781,40 @@ useEffect(() => {
    * Create lab
    */
 
-  async function createLab() {
+  async function createLab(replaceLabIds?: string[]) {
+    if (labCreationBusyRef.current || labId) return;
+    labCreationBusyRef.current = true;
+    setLabNotice(null);
+    setLabConflictIds(null);
     setCreatingLab(true);
     try {
-      const response = await apiFetch(`${API_URL}/labs`, { method: "POST" });
-      if (!response.ok) { const error = await response.json().catch(() => null); throw new Error(error?.detail ?? "Failed to create lab"); }
-      const data = await response.json();
+      const response = await apiFetch(`${API_URL}/labs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          replaceLabIds ? { replace_lab_ids: replaceLabIds } : {}
+        ),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail = data?.detail;
+        if (
+          response.status === 409 &&
+          detail?.code === "LAB_ALREADY_OPEN" &&
+          Array.isArray(detail.lab_ids) &&
+          detail.lab_ids.length > 0 &&
+          detail.lab_ids.every((id: unknown) => typeof id === "string")
+        ) {
+          setLabConflictIds(detail.lab_ids);
+          return;
+        }
+        throw new Error(
+          typeof detail === "string"
+            ? detail
+            : detail?.message ?? "Failed to create lab."
+        );
+      }
+      if (!data?.lab_id) throw new Error("Invalid response when opening the lab.");
       closingLabRef.current = false;
       setLabId(data.lab_id);
       setExpandedWorkspaceDirectories({}); setWorkspaceDirectories({}); setGitStatus(null); setGitDiff(null);
@@ -755,7 +840,7 @@ useEffect(() => {
       void loadGitHubRepositories();
     } catch (error) {
       console.error(error); alert(error instanceof Error ? error.message : "Failed to create lab");
-    } finally { setCreatingLab(false); }
+    } finally { labCreationBusyRef.current = false; setCreatingLab(false); }
   }
 
 
@@ -1912,6 +1997,47 @@ useEffect(() => {
   return (
     <main className="app">
       <dialog
+        ref={labConflictDialogRef}
+        className="welcome-dialog"
+        aria-labelledby="lab-conflict-title"
+        onCancel={() => setLabConflictIds(null)}
+      >
+        <div className="welcome-guide">
+          <h2 id="lab-conflict-title">Another lab is already open</h2>
+          <p>Your account has an existing lab, possibly in another tab or device.</p>
+          <p className="welcome-notice">
+            Terminating it will stop its programs and delete any work that
+            has not been pushed to GitHub or downloaded.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+            <button
+              type="button"
+              style={{ padding: "10px 14px" }}
+              disabled={creatingLab || !labConflictIds}
+              onClick={() => {
+                if (labConflictIds) void createLab(labConflictIds);
+              }}
+            >
+              Terminate old lab and open here
+            </button>
+            <button
+              type="button"
+              style={{ padding: "10px 14px" }}
+              onClick={() => {
+                setLabConflictIds(null);
+                setLabNotice(
+                  "Your existing lab is still running. Close this tab and continue in the other tab or device."
+                );
+                window.close();
+              }}
+            >
+              Keep existing lab and close this tab
+            </button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog
         ref={welcomeDialogRef}
         className="welcome-dialog"
         aria-label="WiByte Python Lab help"
@@ -1942,9 +2068,7 @@ useEffect(() => {
 
         {!labId && (
           <button
-            onClick={
-              createLab
-            }
+            onClick={() => void createLab()}
             disabled={
               creatingLab ||
               backendStatus !==
@@ -1979,7 +2103,12 @@ useEffect(() => {
 
 
       {labId ? (
-  <section className="workspace">
+  <section
+    className="workspace"
+    style={{
+      gridTemplateColumns: `min(${sidebarWidth}px, 40%) 8px minmax(0, 1fr)`,
+    }}
+  >
     <aside className="file-explorer">
 <section className="explorer-section workspace-section">
         <div className="file-panel-header">
@@ -2166,6 +2295,56 @@ useEffect(() => {
 
     </aside>
 
+    <div
+      className="sidebar-divider"
+      role="separator"
+      aria-label="Resize workspace sidebar"
+      aria-orientation="vertical"
+      aria-valuemin={220}
+      aria-valuemax={520}
+      aria-valuenow={Math.round(sidebarWidth)}
+      tabIndex={0}
+      title="Drag to resize; double-click to reset"
+      onPointerDown={(event) => {
+        if (event.button !== 0 || !event.isPrimary) return;
+        event.preventDefault();
+        event.currentTarget.focus();
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+        const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+        if (!bounds) return;
+        const maximum = Math.min(520, bounds.width * 0.4);
+        setSidebarWidth(Math.max(220, Math.min(maximum, event.clientX - bounds.left - 4)));
+      }}
+      onPointerUp={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      }}
+      onPointerCancel={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+      }}
+      onDoubleClick={() => setSidebarWidth(310)}
+      onKeyDown={(event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        const bounds = event.currentTarget.parentElement?.getBoundingClientRect();
+        if (!bounds) return;
+        const maximum = Math.min(520, bounds.width * 0.4);
+        const key = event.key;
+        setSidebarWidth((width) =>
+          key === "Home" ? 220 :
+          key === "End" ? maximum :
+          Math.max(220, Math.min(maximum, width + (key === "ArrowRight" ? 10 : -10)))
+        );
+      }}
+    />
+
+
     <section
       className="editor-terminal"
       style={{
@@ -2337,7 +2516,7 @@ useEffect(() => {
     </h2>
 
     <p>
-      Create a lab to start coding.
+      {labNotice ?? "Create a lab to start coding."}
     </p>
   </section>
 )}

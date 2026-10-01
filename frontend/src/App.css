@@ -455,3 +455,33 @@ button:disabled { cursor: not-allowed; opacity: .46; }
 .connected-repository-content .git-change-list {
   overflow-wrap: anywhere;
 }
+
+/* Resizable workspace sidebar */
+.sidebar-divider {
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+  background: var(--border);
+}
+.sidebar-divider:hover,
+.sidebar-divider:focus-visible {
+  background: var(--accent);
+}
+.sidebar-divider:focus-visible {
+  outline: 2px solid var(--accent-hover);
+  outline-offset: -2px;
+}
+@media (min-width: 1001px) {
+  .workspace > .file-explorer { border-right: none; }
+}
+@media (max-width: 1000px) {
+  .workspace {
+    grid-template-columns: minmax(220px, 270px) minmax(0, 1fr) !important;
+  }
+  .sidebar-divider { display: none; }
+}
+@media (max-width: 700px) {
+  .workspace {
+    grid-template-columns: 210px minmax(0, 1fr) !important;
+  }
+}

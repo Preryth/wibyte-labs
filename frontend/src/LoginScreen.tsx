@@ -14,6 +14,30 @@ type Mode =
   | "forgot-password";
 
 
+
+async function lookupAccountStatus(email: string): Promise<"new" | "confirmed" | "unconfirmed"> {
+  const response = await fetch(
+    `${import.meta.env.VITE_API_URL}/auth/account-status`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    },
+  );
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.detail === "string"
+        ? data.detail
+        : "Unable to check your account. Please try again."
+    );
+  }
+  if (!["new", "confirmed", "unconfirmed"].includes(data?.status)) {
+    throw new Error("Unable to check your account. Please try again.");
+  }
+  return data.status;
+}
+
 function LoginScreen() {
   const [
     mode,
@@ -95,6 +119,16 @@ function LoginScreen() {
     setCanResendConfirmation(false);
 
     try {
+      const accountStatus = await lookupAccountStatus(normalisedEmail);
+      if (accountStatus === "confirmed") {
+        changeMode("sign-in");
+        setMessage("Account already exists. Please log in instead of signing up.");
+        return;
+      }
+      if (accountStatus === "new") {
+        throw new Error("No account found for this email. Please create an account first.");
+      }
+
       const {
         error,
       } =
@@ -157,25 +191,7 @@ function LoginScreen() {
       return;
     }
 
-    if (
-      mode === "sign-up" &&
-      password.length < 8
-    ) {
-      setErrorMessage(
-        "Your password must be at least 8 characters long."
-      );
-      return;
-    }
 
-    if (
-      mode === "sign-up" &&
-      password !== confirmPassword
-    ) {
-      setErrorMessage(
-        "The passwords do not match."
-      );
-      return;
-    }
 
     setSubmitting(true);
     setMessage(null);
@@ -199,6 +215,26 @@ function LoginScreen() {
       }
 
       if (mode === "sign-up") {
+        const accountStatus = await lookupAccountStatus(normalisedEmail);
+        if (accountStatus !== "new") {
+          changeMode("sign-in");
+          setEmail(normalisedEmail);
+          setCanResendConfirmation(accountStatus === "unconfirmed");
+          setMessage(
+            accountStatus === "confirmed"
+              ? "Account already exists. Please log in instead of signing up."
+              : "Account already exists. Confirm your email, then sign in. You can resend the confirmation below."
+          );
+          return;
+        }
+
+        if (password.length < 8) {
+          throw new Error("Your password must be at least 8 characters long.");
+        }
+        if (password !== confirmPassword) {
+          throw new Error("The passwords do not match.");
+        }
+
         const {
           data,
           error,

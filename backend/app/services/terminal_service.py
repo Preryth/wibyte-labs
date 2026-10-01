@@ -183,8 +183,11 @@ class TerminalService:
 
         exec_instance = container.client.api.exec_create(
             container.id,
-            cmd=["bash", "-c", "stty -echoctl; exec bash -i"],
-            environment={"DISPLAY": ":1"},
+            cmd=["bash", "-c", "stty -echoctl; export PS1='\\[\\e[38;2;139;92;246m\\]wibyte-workspace$\\[\\e[0m\\] '; exec bash --norc -i"],
+            environment={
+                "DISPLAY": ":1",
+                "PS1": "wibyte-workspace$ ",
+            },
             stdin=True,
             stdout=True,
             stderr=True,

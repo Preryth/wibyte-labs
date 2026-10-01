@@ -217,6 +217,10 @@ app.include_router(
 # Health
 # ---------------------------------------------------------
 
+from backend.app.routes.account_lookup import router as account_lookup_router
+app.include_router(account_lookup_router)
+
+
 @app.get("/health")
 def health_check():
     return {
@@ -228,8 +232,28 @@ def health_check():
 # Create lab
 # ---------------------------------------------------------
 
+from backend.app.services.single_lab_service import (
+    LabCreateRequest,
+    create_single_lab,
+)
+
+
 @app.post("/labs")
-def create_lab(user: CurrentUser):
+def create_lab(user: CurrentUser, request: LabCreateRequest | None = None):
+    return create_single_lab(
+        user, request, docker_client, lambda: _create_lab_unchecked(user)
+    )
+
+
+@app.get("/labs/{lab_id}/session")
+def lab_session_status(lab_id: str, user: CurrentUser):
+    session = lab_service.get_for_student(lab_id, user.id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="This lab is no longer active.")
+    return {"lab_id": lab_id, "status": session.status}
+
+
+def _create_lab_unchecked(user: CurrentUser):
     """Create a temporary Lab. GitHub remains the persistent source of truth.
 
     The Lab starts empty when the permanent repository does not yet exist.
