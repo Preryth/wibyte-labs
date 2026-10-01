@@ -23,6 +23,12 @@ import ResetPasswordScreen from "./ResetPasswordScreen";
 import { supabase } from "./lib/supabase";
 
 
+
+function defaultPythonFilename(path: string): string {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return name && !name.includes(".") ? `${path}.py` : path;
+}
+
 const API_URL =
   import.meta.env.VITE_API_URL;
 
@@ -100,6 +106,64 @@ function LabApp({
   );
 
   const [editorWidth, setEditorWidth] = useState(60);
+
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadingFile, setUploadingFile] = useState(false);
+
+  async function uploadWorkspaceFile(file: File) {
+    if (!labId || uploadingFile) return;
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Maximum file size is 10 MB.");
+      return;
+    }
+
+    setUploadingFile(true);
+    try {
+      const response = await apiFetch(
+        `${API_URL}/labs/${labId}/upload?path=${encodeURIComponent(defaultPythonFilename(file.name))}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file,
+        },
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Upload failed.");
+      }
+      await refreshWorkspaceTree();
+      if (activeGitHubRepositoryId) void loadGitStatus();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Upload failed.");
+    } finally {
+      setUploadingFile(false);
+    }
+  }
+
+  async function downloadWorkspaceFile(path: string) {
+    if (!labId) return;
+    try {
+      const response = await apiFetch(
+        `${API_URL}/labs/${labId}/download?path=${encodeURIComponent(path)}`,
+      );
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail ?? "Download failed.");
+      }
+
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = path.split("/").pop() || "download";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Download failed.");
+    }
+  }
+
   const [accessToken, setAccessToken] = useState("");
 
   useEffect(() => {
@@ -1375,7 +1439,7 @@ useEffect(() => {
 
 
     const path =
-      fileName.trim();
+      defaultPythonFilename(fileName.trim());
 
 
     if (!path) {
@@ -1656,7 +1720,8 @@ useEffect(() => {
    */
 
   async function renameFile(
-    oldPath: string
+    oldPath: string,
+    isFile = false
   ) {
     if (!labId) {
       return;
@@ -1681,7 +1746,7 @@ useEffect(() => {
 
 
     const trimmedName =
-      newName.trim();
+      isFile ? defaultPythonFilename(newName.trim()) : newName.trim();
 
 
     if (!trimmedName) {
@@ -1758,9 +1823,7 @@ useEffect(() => {
       }
 
 
-      await loadFiles(
-        labId
-      );
+      await refreshWorkspaceTree();
 
 
       /*
@@ -2352,6 +2415,26 @@ useEffect(() => {
           <span>WORKSPACE</span>
 
           <div className="explorer-header-actions">
+            <input
+              ref={uploadInputRef}
+              type="file"
+              hidden
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = "";
+                if (file) void uploadWorkspaceFile(file);
+              }}
+            />
+            <button
+              className="workspace-upload-button"
+              type="button"
+              disabled={uploadingFile || !labId}
+              title="Upload a file to Workspace (maximum 10 MB)"
+              onClick={() => uploadInputRef.current?.click()}
+            >
+              {uploadingFile ? "Uploading..." : "Upload"}
+            </button>
+
             <button
               className="small-action-button"
               onClick={() => void refreshWorkspaceTree()}
@@ -2392,7 +2475,7 @@ useEffect(() => {
                     onOpenFile={openFile}
                     onRename={renameFile}
                     onMove={movePath}
-                    onDelete={deleteFile}
+                    onDelete={deleteFile} onDownload={downloadWorkspaceFile}
                   />
                 );
               }
@@ -2406,7 +2489,7 @@ useEffect(() => {
                   onOpen={openFile}
                   onRename={renameFile}
                   onMove={movePath}
-                  onDelete={deleteFile}
+                  onDelete={deleteFile} onDownload={downloadWorkspaceFile}
                 />
               );
             })}
@@ -2673,14 +2756,16 @@ function WorkspaceFileRow({
   onRename,
   onMove,
   onDelete,
+  onDownload,
 }: {
   path: string;
   name: string;
   selected: boolean;
   onOpen: (path: string) => void;
-  onRename: (path: string) => void;
+  onRename: (path: string, isFile?: boolean) => void;
   onMove: (path: string) => void;
   onDelete: (path: string) => void;
+  onDownload: (path: string) => void;
 }) {
   return (
     <div className={`workspace-file-row${selected ? " selected" : ""}`}>
@@ -2698,8 +2783,18 @@ function WorkspaceFileRow({
         <button
           className="small-action-button"
           type="button"
+          title="Download saved file"
+          aria-label={`Download ${name}`}
+          onClick={() => void onDownload(path)}
+        >
+          ↓
+        </button>
+
+        <button
+          className="small-action-button"
+          type="button"
           title="Rename file"
-          onClick={() => void onRename(path)}
+          onClick={() => void onRename(path, true)}
         >
           ✎
         </button>
@@ -2736,6 +2831,7 @@ function WorkspaceDirectoryTree({
   onRename,
   onMove,
   onDelete,
+  onDownload,
 }: {
   item: LabFile;
   path: string;
@@ -2744,9 +2840,10 @@ function WorkspaceDirectoryTree({
   selectedFile: string | null;
   onToggleDirectory: (path: string) => void;
   onOpenFile: (path: string) => void;
-  onRename: (path: string) => void;
+  onRename: (path: string, isFile?: boolean) => void;
   onMove: (path: string) => void;
   onDelete: (path: string) => void;
+  onDownload: (path: string) => void;
 }) {
   const isExpanded =
     expandedDirectories[path] ?? false;
@@ -2826,7 +2923,7 @@ function WorkspaceDirectoryTree({
                     onOpenFile={onOpenFile}
                     onRename={onRename}
                     onMove={onMove}
-                    onDelete={onDelete}
+                    onDelete={onDelete} onDownload={onDownload}
                   />
                 );
               }
@@ -2840,7 +2937,7 @@ function WorkspaceDirectoryTree({
                   onOpen={onOpenFile}
                   onRename={onRename}
                   onMove={onMove}
-                  onDelete={onDelete}
+                  onDelete={onDelete} onDownload={onDownload}
                 />
               );
             })

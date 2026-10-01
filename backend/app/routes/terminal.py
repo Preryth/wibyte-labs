@@ -126,6 +126,10 @@ async def terminal(websocket: WebSocket, lab_id: str):
 
             if process_session is process:
                 process_session = None
+                await websocket.send_json({
+                    "type": "output",
+                    "data": "\r\n",
+                })
                 await terminal_session.write("\x03")
 
             await websocket.send_json(
@@ -294,6 +298,11 @@ async def terminal(websocket: WebSocket, lab_id: str):
 
                 safe_path = shlex.quote(path)
                 command = f"python -u -- {safe_path}"
+
+                await websocket.send_json({
+                    "type": "output",
+                    "data": "\r\n",
+                })
 
                 try:
                     process_session = terminal_service.start_process(

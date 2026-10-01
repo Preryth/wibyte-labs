@@ -289,3 +289,6 @@ def delete_file(
 # main.py assigns the shared WorkspaceService instance before
 # registering this router with the FastAPI application.
 router.workspace_service = None
+
+from backend.app.routes.file_transfer import register_file_transfers
+register_file_transfers(router)
