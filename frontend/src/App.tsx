@@ -59,19 +59,9 @@ type GitHubRepository = {
   description?: string | null;
 };
 
-type GitHubRepositoryItem = {
-  name: string;
-  type: "file" | "directory";
-  path: string;
-  size?: number;
-  html_url?: string | null;
-};
 
-type GitHubDirectoryState = {
-  loading: boolean;
-  items: GitHubRepositoryItem[];
-  error: string | null;
-};
+
+
 
 type WorkspaceDirectoryState = {
   loading: boolean;
@@ -90,6 +80,53 @@ type GitStatus = {
     path: string;
   }[];
 };
+
+
+function WelcomeGuide() {
+  return (
+    <article className="welcome-guide">
+      <h2>Welcome to WiByte Python Lab</h2>
+      <p>Your place to write, run, and practise Python.</p>
+
+      <h3>Start coding</h3>
+      <ol>
+        <li>In Workspace, click <strong>Create File</strong> to create a file,
+          or <strong>Upload</strong> to bring one from your device.</li>
+        <li>Names without an extension get <strong>.py</strong>.
+          Explicit extensions such as .txt stay unchanged.</li>
+        <li>Select a file, write your code, and click <strong>Run</strong>.
+          Run saves the current file first.</li>
+        <li>Read output and enter answers in the terminal.
+          Use <strong>Stop</strong> to end a running program.</li>
+        <li>For Turtle or Tkinter, click <strong>GUI</strong> to see the window.
+          Open GUI before running graphical programs manually in the terminal.</li>
+      </ol>
+
+      <h3>Before you finish</h3>
+      <ol>
+        <li>Click <strong>Save</strong> for your latest edits.</li>
+        <li>In the GitHub panel, click <strong>Commit</strong> and enter a short
+          description of your changes.</li>
+        <li>Then click <strong>Push</strong> and wait for confirmation.
+          Commit alone does not upload your work to GitHub.</li>
+        <li>After a successful push, you can close the lab.</li>
+      </ol>
+
+      <p>If GitHub is not connected, open <strong>Settings</strong> to connect it.
+        You can also save a local copy: hover over a Workspace file and click
+        its <strong>down arrow</strong> to download the saved version.</p>
+
+      <p className="welcome-notice">
+        Lab files are temporary. Save and push regularly: labs close after
+        30 minutes of inactivity. Save alone does not preserve work after
+        the lab is removed.
+      </p>
+
+      <p>Uploads and downloads support files up to 10 MB.
+        Use <strong>Help</strong> above the editor to reopen this guide.</p>
+    </article>
+  );
+}
 
 function LabApp({
   currentUser,
@@ -164,6 +201,11 @@ function LabApp({
     }
   }
 
+  const welcomeDialogRef = useRef<HTMLDialogElement | null>(null);
+
+  const gitActionBusyRef = useRef(false);
+  const gitActionVersionRef = useRef(0);
+  const gitStatusPollingRef = useRef(false);
   const [accessToken, setAccessToken] = useState("");
 
   useEffect(() => {
@@ -226,31 +268,17 @@ function LabApp({
     setGithubError,
   ] = useState<string | null>(null);
 
-  const [
-    expandedRepositories,
-    setExpandedRepositories,
-  ] = useState<Record<string, boolean>>({});
 
-  const [
-    githubDirectories,
-    setGithubDirectories,
-  ] = useState<
-    Record<string, GitHubDirectoryState>
-  >({});
 
-  const [
-    openingRepositoryId,
-    setOpeningRepositoryId,
-  ] = useState<string | null>(null);
+
+
+
   const [
     activeGitHubRepositoryId,
     setActiveGitHubRepositoryId,
   ] = useState<string | null>(null);
 
-  const [
-    ,
-    setGithubPreview,
-  ] = useState<{ repositoryId: string; path: string } | null>(null);
+
 
   const [
     expandedWorkspaceDirectories,
@@ -559,182 +587,6 @@ function LabApp({
    */
 
 
-async function loadGitHubDirectory(
-  repositoryId: string,
-  path: string
-) {
-  const key =
-    `${repositoryId}:${path}`;
-
-  setGithubDirectories(
-    (current) => ({
-      ...current,
-      [key]: {
-        loading: true,
-        items:
-          current[key]?.items ?? [],
-        error: null,
-      },
-    })
-  );
-
-  try {
-    const response =
-      await apiFetch(
-        `${API_URL}/github/repositories/${encodeURIComponent(
-          repositoryId
-        )}/contents?path=${encodeURIComponent(
-          path
-        )}`
-      );
-
-    if (!response.ok) {
-      const error =
-        await response
-          .json()
-          .catch(() => null);
-
-      throw new Error(
-        error?.detail ??
-          "Failed to load repository contents."
-      );
-    }
-
-    const data =
-      await response.json();
-
-    setGithubDirectories(
-      (current) => ({
-        ...current,
-        [key]: {
-          loading: false,
-          items: data.contents ?? [],
-          error: null,
-        },
-      })
-    );
-  } catch (error) {
-    console.error(
-      "Failed to load GitHub directory:",
-      error
-    );
-
-    setGithubDirectories(
-      (current) => ({
-        ...current,
-        [key]: {
-          loading: false,
-          items: [],
-          error:
-            error instanceof Error
-              ? error.message
-              : "Failed to load directory.",
-        },
-      })
-    );
-  }
-}
-async function toggleGitHubRepository(
-  repositoryId: string
-) {
-  const isExpanded =
-    expandedRepositories[
-      repositoryId
-    ] ?? false;
-
-  setExpandedRepositories(
-    (current) => ({
-      ...current,
-      [repositoryId]: !isExpanded,
-    })
-  );
-
-  if (isExpanded) {
-    return;
-  }
-
-  await loadGitHubDirectory(
-    repositoryId,
-    ""
-  );
-}
-const [
-  expandedGitHubDirectories,
-  setExpandedGitHubDirectories,
-] = useState<
-  Record<string, boolean>
->({});
-async function toggleGitHubDirectory(
-  repositoryId: string,
-  path: string
-) {
-  const key =
-    `${repositoryId}:${path}`;
-
-  const isExpanded =
-    expandedGitHubDirectories[key] ??
-    false;
-
-  setExpandedGitHubDirectories(
-    (current) => ({
-      ...current,
-      [key]: !isExpanded,
-    })
-  );
-
-  if (isExpanded) {
-    return;
-  }
-
-  await loadGitHubDirectory(
-    repositoryId,
-    path
-  );
-}
-async function openGitHubRepository(
-  repositoryId: string
-) {
-  if (!labId) {
-    alert("Create a Lab before selecting a GitHub repository.");
-    return;
-  }
-
-  if (activeGitHubRepositoryId === repositoryId) {
-    return;
-  }
-
-  const proceed = window.confirm(
-    "Open this repository in the current Lab? Its files will be copied into the empty Lab workspace."
-  );
-  if (!proceed) return;
-
-  setOpeningRepositoryId(repositoryId);
-  try {
-    const response = await apiFetch(
-      `${API_URL}/github/labs/${labId}/repository`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repository_id: repositoryId }),
-      }
-    );
-    if (!response.ok) {
-      const error = await response.json().catch(() => null);
-      throw new Error(error?.detail ?? "Failed to open GitHub repository.");
-    }
-    setActiveGitHubRepositoryId(repositoryId);
-    setGitStatus(null);
-    setGitDiff(null);
-    setSelectedFile(null);
-    setGithubPreview(null);
-    setFileContent("");
-    await refreshWorkspaceTree();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "Failed to open GitHub repository.");
-  } finally {
-    setOpeningRepositoryId(null);
-  }
-}
   useEffect(() => {
     apiFetch(`${API_URL}/health`)
       .then((response) => {
@@ -867,29 +719,6 @@ useEffect(() => {
 }, [
   loadGitHubRepositories,
 ]);
-
-  async function createGitHubRepository() {
-    const name = window.prompt("New GitHub repository name:")?.trim();
-    if (!name) return;
-    const description = window.prompt("Description (optional):") ?? "";
-    setGithubLoading(true);
-    try {
-      const response = await apiFetch(`${API_URL}/github/repositories`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, private: false }),
-      });
-      if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(error?.detail ?? "Failed to create repository");
-      }
-      await loadGitHubRepositories();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to create repository");
-    } finally {
-      setGithubLoading(false);
-    }
-  }
 
   /*
    * Create lab
@@ -1222,12 +1051,15 @@ useEffect(() => {
     }
   }
 
-  async function loadGitStatus() {
-    if (!labId || !activeGitHubRepositoryId || closingLabRef.current) {
-      return;
-    }
 
-    setGitLoading(true);
+  async function loadGitStatus() {
+    if (
+      !labId || !activeGitHubRepositoryId || closingLabRef.current ||
+      gitActionBusyRef.current || gitStatusPollingRef.current
+    ) return;
+
+    gitStatusPollingRef.current = true;
+    const version = gitActionVersionRef.current;
 
     try {
       const response = await apiFetch(
@@ -1239,18 +1071,18 @@ useEffect(() => {
         throw new Error(error?.detail ?? "Failed to load Git status");
       }
 
-      setGitStatus(await response.json());
-    } catch (error) {
-      /* A status request can already be in flight when the Lab is closed. */
-      if (!closingLabRef.current) {
-        alert(
-          error instanceof Error
-            ? error.message
-            : "Failed to load Git status"
-        );
+      const status = await response.json();
+      if (
+        !closingLabRef.current &&
+        !gitActionBusyRef.current &&
+        version === gitActionVersionRef.current
+      ) {
+        setGitStatus(status);
       }
+    } catch (error) {
+      console.error("Background Git status check failed:", error);
     } finally {
-      setGitLoading(false);
+      gitStatusPollingRef.current = false;
     }
   }
 
@@ -1290,7 +1122,7 @@ useEffect(() => {
   }
 
   async function commitGitChanges() {
-    if (!labId || !activeGitHubRepositoryId) {
+    if (!labId || !activeGitHubRepositoryId || gitActionBusyRef.current) {
       return;
     }
 
@@ -1299,6 +1131,8 @@ useEffect(() => {
       return;
     }
 
+    gitActionBusyRef.current = true;
+    gitActionVersionRef.current += 1;
     setGitLoading(true);
 
     try {
@@ -1329,15 +1163,18 @@ useEffect(() => {
           : "Failed to commit changes"
       );
     } finally {
+      gitActionBusyRef.current = false;
       setGitLoading(false);
     }
   }
 
   async function pushGitChanges() {
-    if (!labId || !activeGitHubRepositoryId) {
+    if (!labId || !activeGitHubRepositoryId || gitActionBusyRef.current) {
       return;
     }
 
+    gitActionBusyRef.current = true;
+    gitActionVersionRef.current += 1;
     setGitLoading(true);
 
     try {
@@ -1353,7 +1190,11 @@ useEffect(() => {
 
       const data = await response.json();
       setGitStatus(data.status ?? null);
-      alert(data.output || "Push completed.");
+      const repositoryName = githubRepositories.find(
+        (repository) => repository.id === activeGitHubRepositoryId
+      )?.name ?? "repository";
+      const branch = data.status?.branch ?? gitStatus?.branch;
+      alert(`Pushed to GitHub → ${repositoryName}${branch ? ` (${branch})` : ""}`);
     } catch (error) {
       alert(
         error instanceof Error
@@ -1361,6 +1202,7 @@ useEffect(() => {
           : "Failed to push changes"
       );
     } finally {
+      gitActionBusyRef.current = false;
       setGitLoading(false);
     }
   }
@@ -1579,72 +1421,6 @@ useEffect(() => {
    * uses the normal workspace file loader instead of
    * attempting to create another Lab.
    */
-  async function openGitHubFile(
-    repositoryId: string,
-    filePath: string
-  ) {
-    setLoadingFile(true);
-    try {
-      const response = await apiFetch(
-        `${API_URL}/github/repositories/${encodeURIComponent(repositoryId)}/file?path=${encodeURIComponent(filePath)}`
-      );
-      if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(error?.detail ?? "Failed to load GitHub file");
-      }
-      const data = await response.json();
-      setSelectedFile(null);
-      setGithubPreview({ repositoryId, path: data.path });
-      setFileContent(data.content);
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to load GitHub file");
-    } finally {
-      setLoadingFile(false);
-    }
-  }
-
-  async function editGitHubFile(
-    repositoryId: string,
-    filePath: string
-  ) {
-    if (!labId) {
-      alert("Create a Lab and select this repository before editing its files.");
-      return;
-    }
-    if (activeGitHubRepositoryId !== repositoryId) {
-      alert("Select this repository for the active Lab before editing its files.");
-      return;
-    }
-    if (!window.confirm(`Copy ${filePath} into the Lab workspace and edit it there?`)) return;
-    try {
-      const source = await apiFetch(
-        `${API_URL}/github/repositories/${encodeURIComponent(repositoryId)}/file?path=${encodeURIComponent(filePath)}`
-      );
-      if (!source.ok) {
-        const error = await source.json().catch(() => null);
-        throw new Error(error?.detail ?? "Failed to download GitHub file");
-      }
-      const data = await source.json();
-      const response = await apiFetch(
-        `${API_URL}/labs/${labId}/files/${encodeURIComponent(filePath)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: data.content }),
-        }
-      );
-      if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(error?.detail ?? "Failed to copy file into Lab");
-      }
-      setGithubPreview(null);
-      await refreshWorkspaceTree();
-      await openFile(filePath);
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to prepare GitHub file for editing");
-    }
-  }
-
   async function saveFile(): Promise<boolean> {
     if (
       !labId ||
@@ -2135,6 +1911,18 @@ useEffect(() => {
 
   return (
     <main className="app">
+      <dialog
+        ref={welcomeDialogRef}
+        className="welcome-dialog"
+        aria-label="WiByte Python Lab help"
+      >
+        <div className="welcome-dialog-actions">
+          <button type="button" onClick={() => welcomeDialogRef.current?.close()}>
+            Close help
+          </button>
+        </div>
+        <WelcomeGuide />
+      </dialog>
 
       <header className="header">
 
@@ -2193,224 +1981,7 @@ useEffect(() => {
       {labId ? (
   <section className="workspace">
     <aside className="file-explorer">
-      {/* =====================================================
-          GITHUB
-          ===================================================== */}
-      <section className="explorer-section github-section">
-        <div className="file-panel-header">
-          <span>
-            GITHUB
-          </span>
-
-          <div className="explorer-header-actions">
-            <button
-              className="small-action-button"
-              onClick={() => void createGitHubRepository()}
-              disabled={githubLoading || !githubConnected}
-              title="Create GitHub repository"
-              type="button"
-            >
-              +
-            </button>
-
-            <button
-              className="small-action-button"
-              onClick={() =>
-                void loadGitHubRepositories()
-              }
-              disabled={githubLoading}
-              title="Refresh GitHub"
-              type="button"
-            >
-              ↻
-            </button>
-          </div>
-        </div>
-
-        {githubLoading ? (
-          <p className="explorer-message">
-            Loading GitHub...
-          </p>
-        ) : githubError ? (
-          <p className="explorer-error">
-            {githubError}
-          </p>
-        ) : !githubConnected ? (
-          <div className="github-connect-banner">
-            <strong>
-              GitHub isn't connected
-            </strong>
-
-            <span>
-              Connect GitHub in Settings to
-              browse your repositories.
-            </span>
-
-            <button
-              type="button"
-              onClick={() =>
-                setSettingsOpen(true)
-              }
-            >
-              Connect GitHub
-            </button>
-          </div>
-        ) : (
-          <div className="github-panel-content">
-            <div className="github-account-row">
-              @{githubUsername}
-            </div>
-
-            {githubRepositories.length === 0 ? (
-              <p className="explorer-message">
-                No repositories found.
-              </p>
-            ) : (
-              githubRepositories.map(
-                (repository) => {
-                  const isExpanded =
-                    expandedRepositories[
-                      repository.id
-                    ] ?? false;
-
-                  const rootKey =
-                    `${repository.id}:`;
-
-                  const rootDirectory =
-                    githubDirectories[
-                      rootKey
-                    ];
-
-                  return (
-                    <div
-                      key={repository.id}
-                      className="github-repository"
-                    >
-                      <div className="github-repository-header">
-                        <button
-                          className="github-repository-toggle"
-                          type="button"
-                          onClick={() =>
-                            void toggleGitHubRepository(
-                              repository.id
-                            )
-                          }
-                        >
-                          {isExpanded
-                            ? "▼"
-                            : "▶"}{" "}
-                          📁{" "}
-                          {repository.name}
-                        </button>
-
-                        <button
-                          className="repo-open-button"
-                          type="button"
-                          onClick={() =>
-                            void openGitHubRepository(
-                              repository.id
-                            )
-                          }
-                          disabled={
-                            openingRepositoryId ===
-                              repository.id ||
-                            creatingLab
-                          }
-                        >
-                          {openingRepositoryId ===
-                          repository.id
-                            ? "Opening..."
-                            : activeGitHubRepositoryId === repository.id
-                            ? "Active"
-                            : "Use"}
-                        </button>
-                      </div>
-
-                      {repository.description && (
-                        <div className="github-repository-description">
-                          {repository.description}
-                        </div>
-                      )}
-
-                      {isExpanded && (
-                        <div>
-                          {rootDirectory?.loading ? (
-                            <p className="explorer-message">
-                              Loading...
-                            </p>
-                          ) : rootDirectory?.error ? (
-                            <p className="explorer-error">
-                              {rootDirectory.error}
-                            </p>
-                          ) : (
-                            rootDirectory?.items?.map(
-                              (item) => (
-                                item.type ===
-                                "directory" ? (
-                                  <GitHubDirectoryTree
-                                  key={item.path}
-                                  repositoryId={
-                                    repository.id
-                                  }
-                                  item={item}
-                                  githubDirectories={
-                                    githubDirectories
-                                    }
-                                    expandedDirectories={
-                                        expandedGitHubDirectories
-                                    }
-                                    onToggleDirectory={
-                                        toggleGitHubDirectory
-                                    }
-                                    onOpenFile={openGitHubFile}
-                                    onEditFile={editGitHubFile}
-                                  />
-                                ) : (
-                                  <div
-                                    key={item.path}
-                                    className="github-file-row"
-                                  >
-                                    <button
-                                      className="github-file-item"
-                                      type="button"
-                                      title={item.path}
-                                      onClick={() =>
-                                          void openGitHubFile(
-                                            repository.id,
-                                            item.path
-                                          )
-                                        }
-                                        >
-                                          📄{" "}
-                                          {item.name}
-                                    </button>
-                                    <button
-                                      className="repo-open-button"
-                                      type="button"
-                                      onClick={() => void editGitHubFile(repository.id, item.path)}
-                                    >
-                                      Edit
-                                    </button>
-                                  </div>
-                                )
-                              )
-                            )
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                }
-              )
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* =====================================================
-          WORKSPACE
-          ===================================================== */}
-      <section className="explorer-section workspace-section">
+<section className="explorer-section workspace-section">
         <div className="file-panel-header">
           <span>WORKSPACE</span>
 
@@ -2445,12 +2016,12 @@ useEffect(() => {
             </button>
 
             <button
-              className="new-file-button"
+              className="create-file-button"
               onClick={createFile}
-              title="New file"
+              title="Create a new file"
               type="button"
             >
-              +
+              Create File
             </button>
           </div>
         </div>
@@ -2497,25 +2068,57 @@ useEffect(() => {
         )}
       </section>
 
-      {/* =====================================================
-          GIT
-          ===================================================== */}
-      {activeGitHubRepositoryId && (
-        <section className="explorer-section git-section">
-          <div className="file-panel-header">
-            <span>GIT</span>
-            <button
-              className="small-action-button"
-              onClick={() => void loadGitStatus()}
-              disabled={gitLoading}
-              title="Refresh Git status"
-              type="button"
-            >
-              ↻
-            </button>
-          </div>
+      <section className="explorer-section connected-repository-section">
+        <div className="file-panel-header">
+          <span>GITHUB</span>
+          <button
+            className="small-action-button"
+            type="button"
+            title="Refresh GitHub and Git status"
+            aria-label="Refresh GitHub and Git status"
+            disabled={githubLoading || gitLoading}
+            onClick={() => {
+              void loadGitHubRepositories();
+              if (activeGitHubRepositoryId) void loadGitStatus();
+            }}
+          >
+            ↻
+          </button>
+        </div>
 
-          {gitStatus ? (
+        <div className="connected-repository-content">
+          {githubError && (
+            <p className="explorer-error">{githubError}</p>
+          )}
+
+          {githubConnected ? (
+            <div className="connected-repository-identity">
+              <span className="connected-repository-user">
+                {githubUsername ? `@${githubUsername}` : "GitHub connected"}
+              </span>
+              <strong className="connected-repository-name">
+                {activeGitHubRepositoryId
+                  ? githubRepositories.find(
+                      (repository) => repository.id === activeGitHubRepositoryId
+                    )?.name ?? (githubLoading ? "Loading repository..." : "Repository details unavailable")
+                  : "No active repository"}
+              </strong>
+            </div>
+          ) : githubLoading ? (
+            <p className="explorer-message">Loading GitHub...</p>
+          ) : (
+            <div className="github-connect-banner">
+              <strong>GitHub isn't connected</strong>
+              <span>Connect GitHub to commit and push your work.</span>
+              <button type="button" onClick={() => setSettingsOpen(true)}>
+                Connect GitHub
+              </button>
+            </div>
+          )}
+
+          {activeGitHubRepositoryId && (
+            <>
+{gitStatus ? (
             <div className="git-status-summary">
               <div>Branch: {gitStatus.branch ?? "unknown"}</div>
               <div>
@@ -2555,8 +2158,11 @@ useEffect(() => {
           {gitDiff !== null && (
             <pre className="git-diff-output">{gitDiff}</pre>
           )}
-        </section>
-      )}
+
+            </>
+          )}
+        </div>
+      </section>
 
     </aside>
 
@@ -2570,8 +2176,16 @@ useEffect(() => {
         <div className="editor-header">
           <span>
             {selectedFile ??
-              "No file selected"}
+              "Welcome"}
           </span>
+
+          <button
+            type="button"
+            className="welcome-help-button"
+            onClick={() => welcomeDialogRef.current?.showModal()}
+          >
+            Help
+          </button>
 
           {selectedFile && (
             <div className="editor-actions">
@@ -2646,10 +2260,7 @@ useEffect(() => {
               }
             />
           ) : (
-            <div className="editor-message">
-              Select a file to start
-              editing.
-            </div>
+            <WelcomeGuide />
           )}
         </div>
       </div>
@@ -2944,169 +2555,6 @@ function WorkspaceDirectoryTree({
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-
-function GitHubDirectoryTree({
-  repositoryId,
-  item,
-  githubDirectories,
-  expandedDirectories,
-  onToggleDirectory,
-  onOpenFile,
-  onEditFile,
-}: {
-  repositoryId: string;
-  item: GitHubRepositoryItem;
-  githubDirectories: Record<
-    string,
-    GitHubDirectoryState
-  >;
-  expandedDirectories: Record<
-    string,
-    boolean
-  >;
-  onToggleDirectory: (
-    repositoryId: string,
-    path: string
-  ) => void;
-  onOpenFile: (
-    repositoryId: string,
-    filePath: string
-  ) => void;
-  onEditFile: (
-    repositoryId: string,
-    filePath: string
-  ) => void;
-}) {
-  const key =
-    `${repositoryId}:${item.path}`;
-
-  const isExpanded =
-    expandedDirectories[key] ??
-    false;
-
-  const directory =
-    githubDirectories[key];
-
-  return (
-    <div>
-
-      <div className="github-file-row">
-
-        <button
-          className="github-file-item"
-          type="button"
-          onClick={() =>
-            onToggleDirectory(
-              repositoryId,
-              item.path
-            )
-          }
-        >
-          {isExpanded
-            ? "▼"
-            : "▶"}{" "}
-          📁{" "}
-          {item.name}
-        </button>
-
-      </div>
-
-
-      {isExpanded && (
-
-        <div
-          style={{
-            paddingLeft: "16px",
-          }}
-        >
-
-          {directory?.loading ? (
-
-            <p className="explorer-message">
-              Loading...
-            </p>
-
-          ) : directory?.error ? (
-
-            <p className="explorer-error">
-              {directory.error}
-            </p>
-
-          ) : (
-
-            directory?.items?.map(
-              (child) => (
-
-                child.type ===
-                "directory" ? (
-
-                  <GitHubDirectoryTree
-                    key={child.path}
-                    repositoryId={
-                      repositoryId
-                    }
-                    item={child}
-                    githubDirectories={
-                      githubDirectories
-                    }
-                    expandedDirectories={
-                      expandedDirectories
-                    }
-                    onToggleDirectory={
-                      onToggleDirectory
-                    }
-                    onOpenFile={onOpenFile}
-                    onEditFile={onEditFile}
-                  />
-
-                ) : (
-
-                  <div
-                    key={child.path}
-                    className="github-file-row"
-                  >
-
-                    <button
-                    className="github-file-item"
-                    type="button"
-                    title={
-                        child.path
-                      }
-                      onClick ={() =>
-                        void onOpenFile(
-                          repositoryId,
-                          child.path
-                        )
-                      }
-                    >
-                      📄{" "}
-                      {child.name}
-                    </button>
-                    <button
-                      className="repo-open-button"
-                      type="button"
-                      onClick={() => void onEditFile(repositoryId, child.path)}
-                    >
-                      Edit
-                    </button>
-
-                  </div>
-
-                )
-
-              )
-            )
-
-          )}
-
-        </div>
-
-      )}
-
     </div>
   );
 }
