@@ -114,7 +114,7 @@ export default function ResetPasswordScreen() {
         <div className="login-brand">
           <span className="login-brand-mark">W</span>
           <h1>Reset password</h1>
-          <p>Choose a new password for your WiByte Labs account.</p>
+          <p>Choose a new password for your WiByte Python Lab account.</p>
         </div>
 
         <div className="login-divider" />
@@ -124,7 +124,7 @@ export default function ResetPasswordScreen() {
 
         {complete ? (
           <p className="login-message">
-            Password updated successfully. <a href="/">Continue to WiByte Labs</a>
+            Password updated successfully. <a href="/">Continue to WiByte Python Lab</a>
           </p>
         ) : ready ? (
           <form className="login-form" onSubmit={(event) => void submit(event)}>

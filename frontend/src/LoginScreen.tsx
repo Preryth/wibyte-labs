@@ -284,7 +284,7 @@ function LoginScreen() {
           </span>
 
           <h1>
-            WiByte Labs
+            WiByte Python Lab
           </h1>
 
           <p>

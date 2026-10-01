@@ -247,8 +247,8 @@ export default function SettingsPanel({
     }
 
     const confirmed = window.confirm(
-      "Disconnect this GitHub account from Wibyte Labs?\n\n" +
-        "Wibyte Labs will remove its locally stored GitHub " +
+      "Disconnect this GitHub account from WiByte Python Lab?\n\n" +
+        "WiByte Python Lab will remove its locally stored GitHub " +
         "OAuth credentials. Your GitHub repositories and " +
         "existing Labs will not be deleted."
     );
@@ -666,7 +666,7 @@ export default function SettingsPanel({
 
                     <div className="github-note">
                       Connect GitHub to access your
-                      repositories from Wibyte Labs.
+                      repositories from WiByte Python Lab.
                     </div>
                   </div>
 

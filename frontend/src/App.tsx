@@ -1929,7 +1929,7 @@ useEffect(() => {
         <div>
 
           <h1>
-            WiByte Labs
+            WiByte Python Lab
           </h1>
 
           <p>
@@ -2587,8 +2587,8 @@ function AccountStatus({
 
         <p>
           {declined
-            ? "This account has not been granted access to WiByte Labs. Contact WiByte if you believe this is a mistake."
-            : "Your account has been created successfully. A WiByte administrator must approve it before you can use WiByte Labs."}
+            ? "This account has not been granted access to WiByte Python Lab. Contact WiByte if you believe this is a mistake."
+            : "Your account has been created successfully. A WiByte administrator must approve it before you can use WiByte Python Lab."}
         </p>
 
         <button
