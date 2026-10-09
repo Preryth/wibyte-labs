@@ -427,22 +427,71 @@ export default function SettingsPanel({
 
             <section className="settings-section">
               <div className="settings-section-title">
+                GitHub
+              </div>
+
+              {settings?.github.connected ? (
+                <div className="github-connected-card">
+                  <div className="github-status-card">
+                    <div>
+                      <div className="github-status-title">
+                        <span className="status-dot" />
+                        Connected
+                      </div>
+
+                      <div className="github-username">
+                        @{settings.github.username}
+                      </div>
+
+                      <div className="github-note">
+                        Your connected GitHub account.
+                      </div>
+                    </div>
+
+                    <button
+                      className="settings-danger-button"
+                      onClick={disconnectGithub}
+                      disabled={disconnectingGithub}
+                      type="button"
+                    >
+                      {disconnectingGithub
+                        ? "Disconnecting..."
+                        : "Disconnect GitHub"}
+                    </button>
+                  </div>
+
+
+                </div>
+              ) : (
+                <div className="github-status-card github-disconnected-card">
+                  <div>
+                    <div className="github-status-title">
+                      Not connected
+                    </div>
+
+                    <div className="github-note">
+                      Connect GitHub to access your
+                      repositories from WiByte Python Lab.
+                    </div>
+                  </div>
+
+                  <button
+                    className="settings-primary-button"
+                    onClick={connectGithub}
+                    type="button"
+                  >
+                    Connect GitHub
+                  </button>
+                </div>
+              )}
+            </section>
+
+            <section className="settings-section">
+              <div className="settings-section-title">
                 Profile
               </div>
 
-              <label className="settings-field">
-                <span>Username</span>
 
-                <input
-                  value={name}
-                  maxLength={100}
-                  placeholder="Your username"
-                  readOnly={!editingProfile}
-                  onChange={(event) =>
-                    setName(event.target.value)
-                  }
-                />
-              </label>
 
               <label className="settings-field">
                 <span>Email</span>
@@ -459,16 +508,7 @@ export default function SettingsPanel({
                 />
               </label>
 
-              <label className="settings-field">
-                <span>Student ID</span>
 
-                <input
-                  value={
-                    settings?.student.id ?? ""
-                  }
-                  readOnly
-                />
-              </label>
 
               {editingProfile ? (
                 <div className="settings-save-row">
@@ -513,7 +553,7 @@ export default function SettingsPanel({
 
             <section className="settings-section">
               <div className="settings-section-title">
-                Account
+                Change password
               </div>
 
               <label className="settings-field">
@@ -593,92 +633,6 @@ export default function SettingsPanel({
                   Sign out
                 </button>
               </div>
-            </section>
-
-            <section className="settings-section">
-              <div className="settings-section-title">
-                GitHub
-              </div>
-
-              {settings?.github.connected ? (
-                <div className="github-connected-card">
-                  <div className="github-status-card">
-                    <div>
-                      <div className="github-status-title">
-                        <span className="status-dot" />
-                        Connected
-                      </div>
-
-                      <div className="github-username">
-                        @{settings.github.username}
-                      </div>
-
-                      <div className="github-note">
-                        This GitHub account can be used
-                        to access repositories from Wibyte
-                        Labs.
-                      </div>
-                    </div>
-
-                    <button
-                      className="settings-danger-button"
-                      onClick={disconnectGithub}
-                      disabled={disconnectingGithub}
-                      type="button"
-                    >
-                      {disconnectingGithub
-                        ? "Disconnecting..."
-                        : "Delete GitHub connection"}
-                    </button>
-                  </div>
-
-                  <div className="github-add-section">
-                    <div>
-                      <div className="github-add-title">
-                        Add GitHub connection
-                      </div>
-
-                      <div className="github-note">
-                        Only one GitHub connection can be
-                        active at a time. Delete the current
-                        connection before connecting a
-                        different GitHub account.
-                      </div>
-                    </div>
-
-                    <button
-                      className="settings-secondary-button"
-                      onClick={connectGithub}
-                      disabled
-                      type="button"
-                      title="Delete the current GitHub connection first"
-                    >
-                      Connect GitHub
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="github-status-card github-disconnected-card">
-                  <div>
-                    <div className="github-status-title">
-                      Not connected
-                    </div>
-
-                    <div className="github-note">
-                      Connect GitHub to access your
-                      repositories from WiByte Python Lab.
-                    </div>
-                  </div>
-
-                  <button
-                    className="settings-primary-button"
-                    onClick={connectGithub}
-                    type="button"
-                  >
-                    Connect GitHub
-                  </button>
-                </div>
-              )}
             </section>
           </div>
         )}

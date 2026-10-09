@@ -104,11 +104,10 @@ function WelcomeGuide() {
 
       <h3>Before you finish</h3>
       <ol>
-        <li>Click <strong>Save</strong> for your latest edits.</li>
-        <li>In the GitHub panel, click <strong>Commit</strong> and enter a short
-          description of your changes.</li>
-        <li>Then click <strong>Push</strong> and wait for confirmation.
-          Commit alone does not upload your work to GitHub.</li>
+        <li>Edits save automatically. Wait for the <strong>green dot</strong> above the editor.</li>
+        <li>In the GitHub panel, click <strong>Commit &amp; Push</strong>
+          and enter a short description of your changes.</li>
+        <li>Wait for confirmation that your work was committed and pushed to GitHub.</li>
         <li>After a successful push, you can close the lab.</li>
       </ol>
 
@@ -117,8 +116,8 @@ function WelcomeGuide() {
         its <strong>down arrow</strong> to download the saved version.</p>
 
       <p className="welcome-notice">
-        Lab files are temporary. Save and push regularly: labs close after
-        30 minutes of inactivity. Save alone does not preserve work after
+        Lab files are temporary. Push to GitHub regularly: labs close after
+        30 minutes of inactivity. Autosave alone does not preserve work after
         the lab is removed.
       </p>
 
@@ -180,6 +179,12 @@ function LabApp({
   }
 
   async function downloadWorkspaceFile(path: string) {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (!(await saveFile())) return;
+
     if (!labId) return;
     try {
       const response = await apiFetch(
@@ -201,10 +206,15 @@ function LabApp({
     } catch (error) {
       alert(error instanceof Error ? error.message : "Download failed.");
     }
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
+    }
   }
 
   const welcomeDialogRef = useRef<HTMLDialogElement | null>(null);
 
+  const lastCommitRef = useRef<{ lab: string; message: string } | null>(null);
   const gitActionBusyRef = useRef(false);
   const gitActionVersionRef = useRef(0);
   const gitStatusPollingRef = useRef(false);
@@ -364,6 +374,92 @@ function LabApp({
 
   /* Prevent Git status polling errors while a Lab is intentionally closing. */
   const closingLabRef = useRef(false);
+
+  const autosaveDraftRef = useRef<{
+    lab: string;
+    path: string;
+    content: string;
+    saved: string;
+  } | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autosaveRequestRef = useRef<Promise<boolean> | null>(null);
+  const fileOperationRef = useRef(false);
+  const [fileOperationBusy, setFileOperationBusy] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("Saved");
+
+  function clearAutosaveTimer() {
+    if (autosaveTimerRef.current !== null) {
+      clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
+  }
+
+  function handleFileEdit(value: string) {
+    const draft = autosaveDraftRef.current;
+    if (!draft || fileOperationRef.current || closingLabRef.current) return;
+    if (draft.content === value) return;
+    draft.content = value;
+    setFileContent(value);
+    clearAutosaveTimer();
+    setSaveStatus(draft.content === draft.saved ? "Saved" : "Unsaved changes");
+    if (draft.content !== draft.saved) {
+      autosaveTimerRef.current = setTimeout(() => {
+        autosaveTimerRef.current = null;
+        void saveFile();
+      }, 800);
+    }
+  }
+
+  function updateAutosavePath(oldPath: string, newPath: string) {
+    const draft = autosaveDraftRef.current;
+    if (draft && (draft.path === oldPath || draft.path.startsWith(oldPath + "/"))) {
+      draft.path = newPath + draft.path.slice(oldPath.length);
+      setSelectedFile(draft.path);
+    }
+  }
+
+  function clearDeletedDraft(path: string) {
+    const draft = autosaveDraftRef.current;
+    if (draft && (draft.path === path || draft.path.startsWith(path + "/"))) {
+      clearAutosaveTimer();
+      autosaveDraftRef.current = null;
+      setSelectedFile(null);
+      setFileContent("");
+      setSaveStatus("Saved");
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      clearAutosaveTimer();
+      autosaveDraftRef.current = null;
+    };
+  }, [labId]);
+
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      const draft = autosaveDraftRef.current;
+      if (draft && (draft.content !== draft.saved || autosaveRequestRef.current)) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, []);
+
+  async function signOutAfterSaving() {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (await saveFile()) await handleSignOut();
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (!labId) return;
     let cancelled = false;
@@ -849,12 +945,30 @@ useEffect(() => {
    */
 
   async function deleteLab() {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (!(await saveFile())) return;
+
     if (!labId) {
       return;
     }
 
 
-    if (gitStatus && (!gitStatus.clean || gitStatus.ahead > 0)) {
+    let closingStatus = gitStatus;
+    if (activeGitHubRepositoryId) {
+      try {
+        const response = await apiFetch(`${API_URL}/github/labs/${labId}/git/status`);
+        if (!response.ok) throw new Error("Could not check saved changes.");
+        closingStatus = await response.json();
+        setGitStatus(closingStatus);
+      } catch {
+        alert("Could not check saved changes. Please try again before closing.");
+        return;
+      }
+    }
+    if (closingStatus && (!closingStatus.clean || closingStatus.ahead > 0)) {
       const discard = window.confirm(
         "Changes made to the repository are yet to be committed and pushed, please commit and push to save changes before closing the lab.\n\nOK: close lab without saving changes\nCancel: take me back"
       );
@@ -915,6 +1029,10 @@ useEffect(() => {
       alert(
         "Failed to delete lab"
       );
+    }
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
     }
   }
 
@@ -1087,6 +1205,12 @@ useEffect(() => {
   }
 
   async function movePath(oldPath: string) {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (!(await saveFile())) return;
+
     if (!labId) {
       return;
     }
@@ -1122,9 +1246,7 @@ useEffect(() => {
         );
       }
 
-      if (selectedFile === oldPath) {
-        setSelectedFile(newPath);
-      }
+      updateAutosavePath(oldPath, newPath);
 
       await refreshWorkspaceTree();
     } catch (error) {
@@ -1133,6 +1255,10 @@ useEffect(() => {
           ? error.message
           : "Failed to move path"
       );
+    }
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
     }
   }
 
@@ -1207,92 +1333,116 @@ useEffect(() => {
   }
 
   async function commitGitChanges() {
-    if (!labId || !activeGitHubRepositoryId || gitActionBusyRef.current) {
-      return;
-    }
+    if (
+      !labId || !activeGitHubRepositoryId ||
+      fileOperationRef.current || gitActionBusyRef.current
+    ) return;
 
-    const message = window.prompt("Commit message:")?.trim();
-    if (!message) {
-      return;
-    }
-
+    fileOperationRef.current = true;
     gitActionBusyRef.current = true;
     gitActionVersionRef.current += 1;
+    setFileOperationBusy(true);
     setGitLoading(true);
 
+    let stage = "save";
     try {
-      const response = await apiFetch(
-        `${API_URL}/github/labs/${labId}/git/commit`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ message }),
-        }
-      );
+      if (!(await saveFile())) return;
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(error?.detail ?? "Failed to commit changes");
+      stage = "status";
+      const statusResponse = await apiFetch(
+        `${API_URL}/github/labs/${labId}/git/status`
+      );
+      if (!statusResponse.ok) throw new Error("Could not check changes.");
+      const status: GitStatus = await statusResponse.json();
+      setGitStatus(status);
+
+      let message = lastCommitRef.current?.lab === labId
+        ? lastCommitRef.current.message
+        : "";
+
+      if (!status.clean) {
+        const entered = window.prompt("Commit message:")?.trim();
+        if (!entered) return;
+
+        stage = "commit";
+        const response = await apiFetch(
+          `${API_URL}/github/labs/${labId}/git/commit`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: entered }),
+          }
+        );
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(
+            typeof error?.detail === "string" ? error.detail : "Commit failed."
+          );
+        }
+        const data = await response.json();
+        message = data.message ?? entered;
+        lastCommitRef.current = { lab: labId, message };
+        setGitStatus(data.status ?? null);
+        setGitDiff(null);
+      } else if (status.ahead === 0 && !message) {
+        alert("Everything is already committed and pushed.");
+        return;
       }
 
-      const data = await response.json();
-      setGitStatus(data.status ?? null);
-      setGitDiff(null);
-      await refreshWorkspaceTree();
-    } catch (error) {
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to commit changes"
-      );
-    } finally {
-      gitActionBusyRef.current = false;
-      setGitLoading(false);
-    }
-  }
-
-  async function pushGitChanges() {
-    if (!labId || !activeGitHubRepositoryId || gitActionBusyRef.current) {
-      return;
-    }
-
-    gitActionBusyRef.current = true;
-    gitActionVersionRef.current += 1;
-    setGitLoading(true);
-
-    try {
+      stage = "push";
       const response = await apiFetch(
         `${API_URL}/github/labs/${labId}/git/push`,
         { method: "POST" }
       );
-
       if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(error?.detail ?? "Failed to push changes");
+        throw new Error("Push failed.");
       }
-
       const data = await response.json();
       setGitStatus(data.status ?? null);
-      const repositoryName = githubRepositories.find(
-        (repository) => repository.id === activeGitHubRepositoryId
-      )?.name ?? "repository";
-      const branch = data.status?.branch ?? gitStatus?.branch;
-      alert(`Pushed to GitHub → ${repositoryName}${branch ? ` (${branch})` : ""}`);
-    } catch (error) {
-      alert(
-        error instanceof Error
-          ? error.message
-          : "Failed to push changes"
+      setGitDiff(null);
+
+      const repository = githubRepositories.find(
+        (item) => item.id === activeGitHubRepositoryId
       );
+      const destination = repository?.full_name ||
+        [repository?.owner || githubUsername, repository?.name]
+          .filter(Boolean).join("/") || "your GitHub repository";
+      const branch = data.branch ?? data.status?.branch;
+
+      lastCommitRef.current = null;
+      alert(
+        `Committed & pushed to GitHub → ${destination}` +
+        (branch ? ` (${branch})` : "") +
+        (message ? `\nCommit: ${message}` : "\nExisting commits pushed.")
+      );
+    } catch (error) {
+      if (stage === "push") {
+        alert(
+          "Your commit is saved in the lab, but pushing could not be confirmed. " +
+          "Check your connection and click Commit & Push to retry. Keep this lab open."
+        );
+      } else {
+        alert(
+          (error instanceof Error ? error.message : "The operation failed.") +
+          "\nNothing was pushed. You can retry."
+        );
+      }
     } finally {
       gitActionBusyRef.current = false;
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
       setGitLoading(false);
+      void loadGitStatus();
     }
   }
 
   async function pullGitChanges() {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (!(await saveFile())) return;
+
     if (!labId || !activeGitHubRepositoryId) {
       return;
     }
@@ -1325,7 +1475,9 @@ useEffect(() => {
       await refreshWorkspaceTree();
 
       if (selectedFile) {
+        fileOperationRef.current = false;
         await openFile(selectedFile);
+        fileOperationRef.current = true;
       }
 
       alert(data.output || "Pull completed.");
@@ -1337,6 +1489,10 @@ useEffect(() => {
       );
     } finally {
       setGitLoading(false);
+    }
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
     }
   }
 
@@ -1437,6 +1593,12 @@ useEffect(() => {
   async function openFile(
     path: string
   ) {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (!(await saveFile())) return;
+
     if (!labId) {
       return;
     }
@@ -1467,13 +1629,15 @@ useEffect(() => {
         await response.json();
 
 
-      setSelectedFile(
-        path
-      );
-
-      setFileContent(
-        data.content
-      );
+      autosaveDraftRef.current = {
+        lab: labId,
+        path,
+        content: data.content,
+        saved: data.content,
+      };
+      setSelectedFile(path);
+      setFileContent(data.content);
+      setSaveStatus("Saved");
 
     } catch (error) {
       console.error(error);
@@ -1486,6 +1650,10 @@ useEffect(() => {
       setLoadingFile(
         false
       );
+    }
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
     }
   }
 
@@ -1507,83 +1675,75 @@ useEffect(() => {
    * attempting to create another Lab.
    */
   async function saveFile(): Promise<boolean> {
-    if (
-      !labId ||
-      !selectedFile
-    ) {
-      return false;
+    clearAutosaveTimer();
+    if (autosaveRequestRef.current) {
+      const succeeded = await autosaveRequestRef.current;
+      if (!succeeded) return false;
+      return saveFile();
     }
 
+    const draft = autosaveDraftRef.current;
+    if (!draft || draft.content === draft.saved) return true;
+    if (closingLabRef.current) return false;
 
-    setSavingFile(
-      true
-    );
-
-
-    try {
-      const response =
-        await apiFetch(
-          `${API_URL}/labs/${labId}/files/${encodeURIComponent(
-            selectedFile
-          )}`,
-          {
-            method: "PUT",
-
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-
-            body: JSON.stringify({
-              content:
-                fileContent,
-            }),
-          }
-        );
-
-
-      if (!response.ok) {
-        throw new Error(
-          "Failed to save file"
-        );
+    const request = (async () => {
+      setSavingFile(true);
+      setSaveStatus("Saving...");
+      try {
+        while (
+          autosaveDraftRef.current === draft &&
+          draft.content !== draft.saved &&
+          !closingLabRef.current
+        ) {
+          const content = draft.content;
+          const response = await apiFetch(
+            `${API_URL}/labs/${draft.lab}/files/${encodeURIComponent(draft.path)}`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content }),
+            }
+          );
+          if (!response.ok) throw new Error("Could not save file.");
+          draft.saved = content;
+        }
+        if (autosaveDraftRef.current !== draft) return false;
+        if (draft.content !== draft.saved) return false;
+        setSaveStatus("Saved");
+        void reportLabActivity(draft.lab);
+        if (activeGitHubRepositoryId) void loadGitStatus();
+        return true;
+      } catch (error) {
+        console.error("Autosave failed:", error);
+        if (autosaveDraftRef.current === draft) {
+          setSaveStatus("Not saved — check connection and retry");
+        }
+        return false;
+      } finally {
+        setSavingFile(false);
       }
+    })();
 
-
-      /*
-       * Saving is also meaningful
-       * lab activity.
-       */
-
-      void reportLabActivity(labId);
-      if (activeGitHubRepositoryId) void loadGitStatus();
-      return true;
-
-    } catch (error) {
-      console.error(error);
-
-      alert(
-        "Failed to save file"
-      );
-
-
-      return false;
-
+    autosaveRequestRef.current = request;
+    try {
+      return await request;
     } finally {
-      setSavingFile(
-        false
-      );
+      if (autosaveRequestRef.current === request) {
+        autosaveRequestRef.current = null;
+      }
     }
   }
-
-
-  /*
-   * Rename file
-   */
 
   async function renameFile(
     oldPath: string,
     isFile = false
   ) {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (!(await saveFile())) return;
+
     if (!labId) {
       return;
     }
@@ -1692,14 +1852,7 @@ useEffect(() => {
        * update its selected path.
        */
 
-      if (
-        selectedFile ===
-        oldPath
-      ) {
-        setSelectedFile(
-          newPath
-        );
-      }
+      updateAutosavePath(oldPath, newPath);
 
     } catch (error) {
       console.error(error);
@@ -1709,6 +1862,10 @@ useEffect(() => {
           ? error.message
           : "Failed to rename file"
       );
+    }
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
     }
   }
 
@@ -1720,6 +1877,12 @@ useEffect(() => {
   async function deleteFile(
     path: string
   ) {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (!(await saveFile())) return;
+
     if (!labId) {
       return;
     }
@@ -1769,18 +1932,7 @@ useEffect(() => {
        * clear the editor.
        */
 
-      if (
-        selectedFile ===
-        path
-      ) {
-        setSelectedFile(
-          null
-        );
-
-        setFileContent(
-          ""
-        );
-      }
+      clearDeletedDraft(path);
 
 
       await loadFiles(
@@ -1795,6 +1947,10 @@ useEffect(() => {
           ? error.message
           : "Failed to delete file"
       );
+    }
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
     }
   }
 
@@ -1887,6 +2043,12 @@ useEffect(() => {
    */
 
   async function runFile() {
+    if (fileOperationRef.current) return;
+    fileOperationRef.current = true;
+    setFileOperationBusy(true);
+    try {
+      if (!(await saveFile())) return;
+
     if (
       !selectedFile ||
       !terminalRef.current
@@ -1933,6 +2095,10 @@ useEffect(() => {
     setRunning(
       true
     );
+    } finally {
+      fileOperationRef.current = false;
+      setFileOperationBusy(false);
+    }
   }
 
 
@@ -2277,11 +2443,23 @@ useEffect(() => {
           )}
 
           <div className="git-actions">
-            {gitStatus?.ahead && gitStatus.ahead > 0 ? (
-              <button onClick={() => void pushGitChanges()} disabled={gitLoading} type="button">{gitLoading ? "Working..." : "Push"}</button>
-            ) : (
-              <button onClick={() => void commitGitChanges()} disabled={gitLoading || !gitStatus || gitStatus.clean} type="button">{gitLoading ? "Working..." : "Commit"}</button>
-            )}
+            <button
+              onClick={() => void commitGitChanges()}
+              disabled={
+                gitLoading || fileOperationBusy || !gitStatus ||
+                (gitStatus.clean && gitStatus.ahead === 0 &&
+                  lastCommitRef.current?.lab !== labId)
+              }
+              type="button"
+              style={
+                gitStatus && (!gitStatus.clean || gitStatus.ahead > 0 ||
+                  lastCommitRef.current?.lab === labId)
+                  ? { background: "#8b5cf6", color: "#fff" }
+                  : undefined
+              }
+            >
+              {gitLoading ? "Working..." : "Commit & Push"}
+            </button>
           </div>
 
           {gitDiff !== null && (
@@ -2368,19 +2546,29 @@ useEffect(() => {
 
           {selectedFile && (
             <div className="editor-actions">
-              <button
-                onClick={
-                  saveFile
-                }
-                disabled={
-                  savingFile ||
-                  running
-                }
-              >
-                {savingFile
-                  ? "Saving..."
-                  : "Save"}
-              </button>
+              <span
+                role="status"
+                aria-live="polite"
+                aria-label={saveStatus}
+                title={saveStatus}
+                style={{
+                  display: "inline-block",
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  backgroundColor: saveStatus === "Saved"
+                    ? "#22c55e"
+                    : saveStatus.startsWith("Not saved")
+                      ? "#ef4444"
+                      : "#eab308",
+                }}
+              />
+              {saveStatus.startsWith("Not saved") && (
+                <button type="button" onClick={() => void saveFile()}>
+                  Retry
+                </button>
+              )}
 
               <button
                 onClick={
@@ -2431,9 +2619,8 @@ useEffect(() => {
               value={
                 fileContent
               }
-              onChange={
-                setFileContent
-              }
+              onChange={handleFileEdit}
+              readOnly={fileOperationBusy}
               onActivity={
                 handleEditorActivity
               }
@@ -2526,7 +2713,7 @@ useEffect(() => {
     apiUrl={API_URL}
     userEmail={currentUser?.email ?? null}
     onSignOut={() =>
-      void handleSignOut()
+      void signOutAfterSaving()
     }
     onClose={() =>
       setSettingsOpen(false)
