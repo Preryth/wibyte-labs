@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 import docker
 
 from backend.app.db.database import engine
+from backend.app.services.git_service import GitService
+from backend.app.services.single_lab_service import student_lab_lock
 
 log = logging.getLogger(__name__)
 
@@ -18,6 +20,18 @@ class InactivityService:
     def __init__(self, docker_client, db_path=None):
         self.docker_client = docker_client
         self.db_path = db_path or engine.url.database
+        self.git_service = GitService(docker_client)
+        with sqlite3.connect(self.db_path, timeout=30) as db:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS lab_timeout_events (
+                    lab_id TEXT PRIMARY KEY,
+                    student_id TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    pushed INTEGER NOT NULL DEFAULT 0,
+                    commit_created INTEGER NOT NULL DEFAULT 0
+                )
+            """)
 
     @staticmethod
     def as_utc(value):
@@ -55,81 +69,238 @@ class InactivityService:
             raise RuntimeError("Invalid GUI idle time")
         return datetime.now(timezone.utc) - timedelta(milliseconds=idle_ms)
 
+    def session_status(self, lab_id, student_id):
+        with sqlite3.connect(self.db_path, timeout=30) as db:
+            row = db.execute(
+                "SELECT status FROM labs WHERE id = ? AND student_id = ?",
+                (lab_id, student_id),
+            ).fetchone()
+            event = db.execute(
+                "SELECT outcome, message FROM lab_timeout_events "
+                "WHERE lab_id = ? AND student_id = ?",
+                (lab_id, student_id),
+            ).fetchone()
+        if row:
+            return {
+                "lab_id": lab_id,
+                "status": row[0],
+                "timeout_outcome": event[0] if event else None,
+                "message": event[1] if event else None,
+            }
+        if event:
+            return {
+                "lab_id": lab_id, "status": "terminated",
+                "timeout_outcome": event[0], "message": event[1],
+            }
+        return None
+
     def cleanup_lab(self, lab_id, container_id):
+        with sqlite3.connect(self.db_path, timeout=30) as db:
+            row = db.execute(
+                "SELECT student_id FROM labs WHERE id = ? AND container_id = ?",
+                (lab_id, container_id),
+            ).fetchone()
+        if row is None:
+            return False
+        with student_lab_lock(row[0]):
+            return self._cleanup_locked(lab_id, container_id)
+
+    def _cleanup_locked(self, lab_id, container_id):
         try:
             container = self.docker_client.containers.get(container_id)
         except docker.errors.NotFound:
             container = None
 
-        # A measurement failure preserves the lab and gets logged/retried.
-        gui_activity = (
-            self.gui_last_activity(container) if container is not None else None
-        )
-
+        gui_activity = self.gui_last_activity(container) if container else None
         db = sqlite3.connect(self.db_path, timeout=30)
+        frozen = False
+        removed = False
         try:
-            # Serialize the final decision with activity updates.
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT container_id, status, last_activity_at "
-                "FROM labs WHERE id = ?",
+                "SELECT student_id, status, last_activity_at, github_repository_id "
+                "FROM labs WHERE id = ? AND container_id = ?",
+                (lab_id, container_id),
+            ).fetchone()
+            if row is None or row[1] not in ("running", "auto_saving"):
+                return False
+
+            owner, status, timestamp, repository_id = row
+            last_activity = self.as_utc(timestamp)
+            if status == "running":
+                if gui_activity and gui_activity > last_activity:
+                    last_activity = gui_activity
+                    db.execute(
+                        "UPDATE labs SET last_activity_at = ? WHERE id = ?",
+                        (last_activity.replace(tzinfo=None).isoformat(" "), lab_id),
+                    )
+                cutoff = datetime.now(timezone.utc) - self.INACTIVITY_TIMEOUT
+                if last_activity > cutoff:
+                    db.commit()
+                    return False
+
+            db.execute(
+                "INSERT OR IGNORE INTO lab_timeout_events "
+                "(lab_id, student_id, outcome, message) VALUES (?, ?, ?, ?)",
+                (lab_id, owner, "saving", "Saving work before inactivity timeout."),
+            )
+            db.execute("UPDATE labs SET status = 'auto_saving' WHERE id = ?", (lab_id,))
+            db.execute(
+                "UPDATE lab_timeout_events SET outcome = 'saving', message = ? "
+                "WHERE lab_id = ?",
+                ("Saving work before inactivity timeout.", lab_id),
+            )
+            db.commit()
+
+            event = db.execute(
+                "SELECT pushed, commit_created FROM lab_timeout_events WHERE lab_id = ?",
                 (lab_id,),
             ).fetchone()
+            pushed, committed = bool(event[0]), bool(event[1])
 
-            if row is None or row[0] != container_id or row[1] != "running":
-                return False
+            if container is None:
+                if not pushed:
+                    message = (
+                        "The lab is no longer available. Its files could not be "
+                        "automatically committed or pushed."
+                    )
+                    outcome = "unavailable"
+                else:
+                    message = self._success_message(committed)
+                    outcome = "saved"
+            else:
+                if not repository_id:
+                    raise RuntimeError("No GitHub repository is connected.")
 
-            last_activity = self.as_utc(row[2])
-            if gui_activity is not None and gui_activity > last_activity:
-                last_activity = gui_activity
-                db.execute(
-                    "UPDATE labs SET last_activity_at = ? WHERE id = ?",
-                    (
-                        last_activity.replace(tzinfo=None).isoformat(" "),
-                        lab_id,
-                    ),
+                # Freeze student programs while Git captures the final saved files.
+                result = container.exec_run(
+                    ["pkill", "-STOP", "-u", "student"], user="root"
+                )
+                if result.exit_code not in (0, 1):
+                    raise RuntimeError("Could not freeze student programs.")
+                frozen = True
+
+                git = self.git_service
+                git_status = git.status(lab_id)
+                if not git_status["clean"]:
+                    git.commit(lab_id, "Auto-save due to lab inactivity")
+                    committed = True
+                    db.execute(
+                        "UPDATE lab_timeout_events SET commit_created = 1 WHERE lab_id = ?",
+                        (lab_id,),
+                    )
+                    db.commit()
+
+                # Push even if tracking information is missing.
+                lab, student, repository = git._assert_repository(lab_id)
+                branch = git._run(container_id, ["git", "branch", "--show-current"])
+                if not branch:
+                    raise RuntimeError("Cannot push from a detached HEAD.")
+                git._run(
+                    container_id,
+                    ["timeout", "30s", *git._credential_command(
+                        ["push", "origin", f"HEAD:refs/heads/{branch}"]
+                    )],
+                    environment=git._remote_environment(student.id),
                 )
 
-            cutoff = datetime.now(timezone.utc) - self.INACTIVITY_TIMEOUT
-            if last_activity > cutoff:
+                # Verify the remote contains exactly the commit being preserved.
+                head = git._run(container_id, ["git", "rev-parse", "HEAD"])
+                remote = git._run(
+                    container_id,
+                    ["timeout", "30s", *git._credential_command(
+                        ["ls-remote", "origin", f"refs/heads/{branch}"]
+                    )],
+                    environment=git._remote_environment(student.id),
+                )
+                if not remote or remote.split()[0] != head:
+                    raise RuntimeError("Could not verify the pushed commit.")
+                if not git.status(lab_id)["clean"]:
+                    raise RuntimeError("Files changed while saving; preserving the lab.")
+
+                message = self._success_message(committed)
+                destination = getattr(repository, "full_name", None)
+                if destination:
+                    message += f" Repository: {destination}."
+                outcome = "saved"
+                db.execute(
+                    "UPDATE lab_timeout_events SET pushed = 1, message = ? WHERE lab_id = ?",
+                    (message, lab_id),
+                )
                 db.commit()
-                return False
 
-            if container is not None:
-                try:
-                    container.remove(force=True)
-                except docker.errors.NotFound:
-                    pass
+                container.remove(force=True)
+                removed = True
 
-            # Only remove the record after Docker deletion succeeds.
-            db.execute("DELETE FROM labs WHERE id = ?", (lab_id,))
+            # Keep the notice after deleting the lab record.
+            db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "UPDATE lab_timeout_events SET outcome = ?, message = ? WHERE lab_id = ?",
+                (outcome, message, lab_id),
+            )
+            db.execute(
+                "DELETE FROM labs WHERE id = ? AND container_id = ?",
+                (lab_id, container_id),
+            )
             db.commit()
-            log.warning("Removed inactive lab %s (%s)", lab_id, container_id[:12])
+            log.warning("Closed inactive lab %s; result=%s", lab_id, outcome)
             return True
-        except Exception:
+        except Exception as exc:
             db.rollback()
-            raise
+            db.execute(
+                "UPDATE labs SET status = 'running' WHERE id = ? AND container_id = ?",
+                (lab_id, container_id),
+            )
+            db.execute(
+                "UPDATE lab_timeout_events SET outcome = 'save_failed', message = ? "
+                "WHERE lab_id = ?",
+                (
+                    "Automatic saving to GitHub could not be completed. "
+                    "Your lab has been kept so you can retry Commit & Push.",
+                    lab_id,
+                ),
+            )
+            db.commit()
+            # Avoid logging Git output that could contain credentials.
+            log.warning("Inactivity save failed for %s (%s); preserving lab",
+                        lab_id, type(exc).__name__)
+            return False
         finally:
+            if frozen and not removed:
+                try:
+                    container.exec_run(["pkill", "-CONT", "-u", "student"], user="root")
+                except Exception:
+                    log.warning("Could not resume student programs in %s", lab_id)
             db.close()
+
+    @staticmethod
+    def _success_message(committed):
+        if committed:
+            return (
+                "Your lab was closed due to inactivity. Saved files were "
+                "automatically committed and pushed to GitHub before closing. "
+                "Commit: Auto-save due to lab inactivity."
+            )
+        return (
+            "Your lab was closed due to inactivity. All saved work was verified "
+            "as pushed to GitHub before closing; no new commit was needed."
+        )
 
     def cleanup_inactive_labs(self):
-        db = sqlite3.connect(self.db_path, timeout=30)
-        try:
+        with sqlite3.connect(self.db_path, timeout=30) as db:
             rows = db.execute(
-                "SELECT id, container_id, last_activity_at "
-                "FROM labs WHERE status = 'running'"
+                "SELECT id, container_id, status, last_activity_at "
+                "FROM labs WHERE status IN ('running', 'auto_saving')"
             ).fetchall()
-        finally:
-            db.close()
 
         cutoff = datetime.now(timezone.utc) - self.INACTIVITY_TIMEOUT
         removed = 0
-        for lab_id, container_id, timestamp in rows:
+        for lab_id, container_id, status, timestamp in rows:
             try:
-                if self.as_utc(timestamp) <= cutoff:
+                if status == "auto_saving" or self.as_utc(timestamp) <= cutoff:
                     removed += int(self.cleanup_lab(lab_id, container_id))
-            except Exception:
-                log.exception("Cleanup failed for lab %s; will retry", lab_id)
+            except Exception as exc:
+                log.warning("Cleanup deferred for %s (%s)", lab_id, type(exc).__name__)
         return removed
 
     async def run_forever(self):

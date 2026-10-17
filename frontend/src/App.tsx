@@ -374,6 +374,7 @@ function LabApp({
 
   /* Prevent Git status polling errors while a Lab is intentionally closing. */
   const closingLabRef = useRef(false);
+  const timeoutFailureShownRef = useRef<string | null>(null);
 
   const autosaveDraftRef = useRef<{
     lab: string;
@@ -470,7 +471,18 @@ function LabApp({
       checking = true;
       try {
         const response = await apiFetch(`${API_URL}/labs/${labId}/session`);
-        if (response.status === 404 && !cancelled && !closingLabRef.current) {
+        const timeoutState = response.ok ? await response.json() : null;
+        if (cancelled || closingLabRef.current) return;
+
+        if (
+          timeoutState?.timeout_outcome === "save_failed" &&
+          timeoutFailureShownRef.current !== labId
+        ) {
+          timeoutFailureShownRef.current = labId;
+          alert(timeoutState.message);
+        }
+
+        if (response.status === 404 || timeoutState?.status === "terminated") {
           closingLabRef.current = true;
           setLabId(null);
           setActiveGitHubRepositoryId(null);
@@ -483,6 +495,7 @@ function LabApp({
           setExpandedWorkspaceDirectories({});
           setWorkspaceDirectories({});
           setLabNotice(
+            timeoutState?.message ??
             "This lab has closed or was replaced from another tab or device. You can close this tab or create a lab here."
           );
         }

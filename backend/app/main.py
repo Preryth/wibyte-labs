@@ -247,10 +247,10 @@ def create_lab(user: CurrentUser, request: LabCreateRequest | None = None):
 
 @app.get("/labs/{lab_id}/session")
 def lab_session_status(lab_id: str, user: CurrentUser):
-    session = lab_service.get_for_student(lab_id, user.id)
-    if session is None:
+    result = inactivity_service.session_status(lab_id, user.id)
+    if result is None:
         raise HTTPException(status_code=404, detail="This lab is no longer active.")
-    return {"lab_id": lab_id, "status": session.status}
+    return result
 
 
 def _create_lab_unchecked(user: CurrentUser):

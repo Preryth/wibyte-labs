@@ -39,7 +39,7 @@ class LabService:
         db = self.SessionLocal()
         try:
             lab = db.get(Lab, lab_id)
-            if lab is None or lab.student_id != student_id:
+            if lab is None or lab.student_id != student_id or lab.status != "running":
                 return None
             return LabSession(id=lab.id, container_id=lab.container_id, status=lab.status, created_at=lab.created_at)
         finally:
@@ -304,7 +304,7 @@ class LabService:
                 lab_id,
             )
 
-            if lab is None:
+            if lab is None or lab.status != "running":
                 return False
 
             lab.last_activity_at = datetime.now(
