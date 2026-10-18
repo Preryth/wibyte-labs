@@ -485,3 +485,54 @@ button:disabled { cursor: not-allowed; opacity: .46; }
     grid-template-columns: 210px minmax(0, 1fr) !important;
   }
 }
+
+/* Welcome guide refresh */
+.welcome-guide {
+  line-height: 1.7;
+}
+.welcome-guide .welcome-intro {
+  color: #cbd5e1;
+}
+.welcome-guide a {
+  color: #c4b5fd;
+  text-underline-offset: 3px;
+}
+.welcome-guide h3 {
+  margin-top: 28px;
+  margin-bottom: 12px;
+}
+.welcome-guide code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.12);
+  color: #ddd6fe;
+  overflow-wrap: anywhere;
+}
+.welcome-guide .welcome-run-options {
+  margin: 10px 0 0;
+  padding-left: 22px;
+}
+.welcome-guide .welcome-inline-note {
+  margin: 6px 0 0;
+  color: #cbd5e1;
+  font-size: 0.95em;
+}
+.welcome-guide .welcome-green-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+.welcome-guide .welcome-notice ol {
+  margin: 0;
+  padding-left: 22px;
+}
+.welcome-guide .welcome-notice li:last-child {
+  margin-bottom: 0;
+}
+.welcome-guide .welcome-closing {
+  margin-top: 28px;
+  color: #c4b5fd;
+  font-weight: 700;
+}

@@ -86,43 +86,94 @@ function WelcomeGuide() {
   return (
     <article className="welcome-guide">
       <h2>Welcome to WiByte Python Lab</h2>
-      <p>Your place to write, run, and practise Python.</p>
+      <p className="welcome-intro">
+        Your place to write, run, and practise Python logic and computational
+        thinking with projects from the WiByte Python curriculum, available at{" "}
+        <a href="https://www.wibyte.in" target="_blank" rel="noopener noreferrer">
+          www.wibyte.in
+        </a>
+        , and beyond.
+      </p>
+
+      <h3>Before you start</h3>
+      <p className="welcome-notice">
+        Your GitHub repository needs to be connected to the Lab before you start.
+        If GitHub is not connected, open <strong>Settings</strong> to connect it.
+      </p>
 
       <h3>Start coding</h3>
       <ol>
-        <li>In Workspace, click <strong>Create File</strong> to create a file,
-          or <strong>Upload</strong> to bring one from your device.</li>
-        <li>Names without an extension get <strong>.py</strong>.
-          Explicit extensions such as .txt stay unchanged.</li>
-        <li>Select a file, write your code, and click <strong>Run</strong>.
-          Run saves the current file first.</li>
-        <li>Read output and enter answers in the terminal.
-          Use <strong>Stop</strong> to end a running program.</li>
-        <li>For Turtle or Tkinter, click <strong>GUI</strong> to see the window.
-          Open GUI before running graphical programs manually in the terminal.</li>
+        <li>
+          In Workspace, click <strong>Create File</strong> to create a file,
+          or <strong>Upload</strong> to bring one from your device.
+        </li>
+        <li>Select a <code>.py</code> file and write your code.</li>
+        <li>
+          All your edits are saved automatically. Wait for the{" "}
+          <span className="welcome-green-dot" aria-hidden="true" />{" "}
+          <strong>green dot</strong> above the editor.
+        </li>
+        <li>
+          Run with one of these options:
+          <ul className="welcome-run-options">
+            <li>
+              <strong>Option 1:</strong> Click <strong>Run</strong> and see
+              the output in the terminal.
+            </li>
+            <li>
+              <strong>Option 2:</strong> Type <code>python3 -i abc.py</code>{" "}
+              directly in the terminal. Replace <code>abc.py</code> with
+              your file name.
+            </li>
+          </ul>
+        </li>
+        <li>Use <strong>Stop</strong> to end a program started with Run.</li>
+        <li>
+          For Turtle or Tkinter, click <strong>GUI</strong> to see the
+          graphical output window.
+          <p className="welcome-inline-note">
+            Open GUI before running graphical programs manually in the terminal.
+          </p>
+        </li>
       </ol>
 
-      <h3>Before you finish</h3>
+      <h3>Before you close</h3>
       <ol>
-        <li>Edits save automatically. Wait for the <strong>green dot</strong> above the editor.</li>
-        <li>In the GitHub panel, click <strong>Commit &amp; Push</strong>
-          and enter a short description of your changes.</li>
-        <li>Wait for confirmation that your work was committed and pushed to GitHub.</li>
+        <li>
+          In the GitHub panel, click <strong>Commit &amp; Push</strong> and
+          enter a short description of your changes.
+        </li>
+        <li>
+          Wait for confirmation that your work was committed and pushed to GitHub.
+        </li>
         <li>After a successful push, you can close the lab.</li>
+        <li>
+          You can also save a local copy: hover over a Workspace file and click
+          its <strong>down arrow</strong> to download the saved version.
+        </li>
       </ol>
 
-      <p>If GitHub is not connected, open <strong>Settings</strong> to connect it.
-        You can also save a local copy: hover over a Workspace file and click
-        its <strong>down arrow</strong> to download the saved version.</p>
+      <h3>Points to keep in mind</h3>
+      <div className="welcome-notice">
+        <ol>
+          <li>
+            Lab files are <strong>temporary</strong>. Push to GitHub or download
+            your files regularly.
+          </li>
+          <li>
+            Labs time out after <strong>30 minutes of inactivity</strong>.
+            The lab automatically commits and pushes saved changes before
+            closing. If this fails, the lab is kept so you can retry.
+            Autosave alone does not preserve work after the lab is removed.
+          </li>
+          <li>Uploads and downloads support files up to <strong>10 MB</strong>.</li>
+          <li>Use <strong>Help</strong> above the editor to reopen this guide.</li>
+        </ol>
+      </div>
 
-      <p className="welcome-notice">
-        Lab files are temporary. Push to GitHub regularly: labs close after
-        30 minutes of inactivity. Autosave alone does not preserve work after
-        the lab is removed.
+      <p className="welcome-closing">
+        Let&apos;s build something great. Forever, enjoy coding!
       </p>
-
-      <p>Uploads and downloads support files up to 10 MB.
-        Use <strong>Help</strong> above the editor to reopen this guide.</p>
     </article>
   );
 }

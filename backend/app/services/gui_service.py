@@ -234,9 +234,24 @@ mkdir -p "$HOME/.fluxbox"
 touch "$HOME/.fluxbox/init"
 sed -i '/^[[:space:]]*session\.screen0\.rootCommand:/d' "$HOME/.fluxbox/init"
 printf '%s\n' 'session.screen0.rootCommand: xsetroot -solid black' >> "$HOME/.fluxbox/init"
+
+# Override theme wallpaper from the first Fluxbox startup.
+touch "$HOME/.fluxbox/overlay"
+sed -i '/^[[:space:]]*background[.:]/d' "$HOME/.fluxbox/overlay"
+printf '%s\n' 'background: solid' 'background.color: black' >> "$HOME/.fluxbox/overlay"
+sed -i '/^[[:space:]]*session\.styleOverlay:/d; /^[[:space:]]*session\.screen0\.styleOverlay:/d' "$HOME/.fluxbox/init"
+printf 'session.styleOverlay: %s/.fluxbox/overlay\n' "$HOME" >> "$HOME/.fluxbox/init"
+printf 'session.screen0.styleOverlay: %s/.fluxbox/overlay\n' "$HOME" >> "$HOME/.fluxbox/init"
+
+# Set black before any VNC client can connect.
+xsetroot -solid black
+if pgrep -x fluxbox >/dev/null; then
+    pkill -USR2 -x fluxbox
+fi
 """,
             ],
             user="student",
+            environment={"DISPLAY": self.DISPLAY},
         )
         if background_config.exit_code != 0:
             raise RuntimeError(
