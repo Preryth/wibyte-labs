@@ -1,3 +1,5 @@
+from backend.app import config
+from contextlib import closing
 import asyncio
 import logging
 import sqlite3
@@ -13,15 +15,15 @@ log = logging.getLogger(__name__)
 
 
 class InactivityService:
-    """Remove registered labs after 30 minutes without user input."""
+    """Save and close inactive labs after the configured idle timeout."""
 
-    INACTIVITY_TIMEOUT = timedelta(minutes=30)
+    INACTIVITY_TIMEOUT = timedelta(minutes=config.IDLE_MINUTES)
 
     def __init__(self, docker_client, db_path=None):
         self.docker_client = docker_client
         self.db_path = db_path or engine.url.database
         self.git_service = GitService(docker_client)
-        with sqlite3.connect(self.db_path, timeout=30) as db:
+        with closing(sqlite3.connect(self.db_path, timeout=30)) as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS lab_timeout_events (
                     lab_id TEXT PRIMARY KEY,
@@ -32,6 +34,7 @@ class InactivityService:
                     commit_created INTEGER NOT NULL DEFAULT 0
                 )
             """)
+            db.commit()
 
     @staticmethod
     def as_utc(value):
@@ -70,7 +73,7 @@ class InactivityService:
         return datetime.now(timezone.utc) - timedelta(milliseconds=idle_ms)
 
     def session_status(self, lab_id, student_id):
-        with sqlite3.connect(self.db_path, timeout=30) as db:
+        with closing(sqlite3.connect(self.db_path, timeout=30)) as db:
             row = db.execute(
                 "SELECT status FROM labs WHERE id = ? AND student_id = ?",
                 (lab_id, student_id),
@@ -95,7 +98,7 @@ class InactivityService:
         return None
 
     def cleanup_lab(self, lab_id, container_id):
-        with sqlite3.connect(self.db_path, timeout=30) as db:
+        with closing(sqlite3.connect(self.db_path, timeout=30)) as db:
             row = db.execute(
                 "SELECT student_id FROM labs WHERE id = ? AND container_id = ?",
                 (lab_id, container_id),
@@ -287,7 +290,7 @@ class InactivityService:
         )
 
     def cleanup_inactive_labs(self):
-        with sqlite3.connect(self.db_path, timeout=30) as db:
+        with closing(sqlite3.connect(self.db_path, timeout=30)) as db:
             rows = db.execute(
                 "SELECT id, container_id, status, last_activity_at "
                 "FROM labs WHERE status IN ('running', 'auto_saving')"

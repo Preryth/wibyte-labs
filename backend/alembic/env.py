@@ -16,6 +16,11 @@ from backend.app.models import (
 
 # Alembic Config object.
 config = context.config
+from backend.app.config import DATABASE_URL
+config.set_main_option(
+    "sqlalchemy.url",
+    DATABASE_URL.render_as_string(hide_password=False).replace("%", "%%"),
+)
 
 
 # Configure Python logging from alembic.ini.

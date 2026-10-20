@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+
+action="${1:-status}"
+if (( $# )); then shift; fi
+if [[ "$action" == setup || "$action" == urls ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Python 3 is required for the setup command." >&2
+        exit 1
+    fi
+    if [[ "$action" == urls ]]; then
+        exec python3 scripts/setup.py --urls "$@"
+    fi
+    exec python3 scripts/setup.py "$@"
+fi
+
+if [[ ! -f backend/.env ]]; then
+    echo "Missing backend/.env. Run ./wpl setup first." >&2
+    exit 1
+fi
+
+compose=(docker compose --env-file backend/.env)
+
+case "$action" in
+    start)
+        python3 scripts/setup.py --check
+        "${compose[@]}" config --quiet
+        "${compose[@]}" up -d --build --wait --wait-timeout 120
+        ;;
+    stop)
+        "${compose[@]}" stop
+        ;;
+    restart)
+        python3 scripts/setup.py --check
+        "${compose[@]}" config --quiet
+        "${compose[@]}" up -d --build --force-recreate --wait --wait-timeout 120
+        ;;
+    status)
+        "${compose[@]}" ps
+        ;;
+    logs)
+        "${compose[@]}" logs --tail 100 "$@"
+        ;;
+    *)
+        echo "Usage: ./wpl {setup [--check]|urls|start|stop|restart|status|logs [--follow]}" >&2
+        exit 1
+        ;;
+esac

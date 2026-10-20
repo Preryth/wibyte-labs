@@ -1,3 +1,4 @@
+from backend.app import config
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
@@ -41,13 +42,8 @@ def _git_service() -> GitService:
 # Configuration
 # =========================================================
 
-GITHUB_CALLBACK_URL = (
-    "https://labs.wibyte.in/api/github/callback"
-)
-
-GITHUB_FRONTEND_URL = (
-    "https://labs.wibyte.in"
-)
+GITHUB_CALLBACK_URL = config.GITHUB_CALLBACK_URL
+GITHUB_FRONTEND_URL = config.GITHUB_FRONTEND_URL
 
 
 # =========================================================

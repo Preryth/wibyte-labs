@@ -1,5 +1,10 @@
 # WiByte Labs authentication setup
 
+For configurable local/new-machine deployment, follow `docs/setup.md` and the
+addresses printed by `./wpl urls`. The production addresses below are historical
+examples, not instructions to replace an existing project's settings. Do not rerun
+initial Supabase SQL on an already configured project.
+
 ## 1. Supabase Dashboard settings
 
 Authentication -> Providers -> Email:

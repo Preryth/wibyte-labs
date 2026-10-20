@@ -1,9 +1,8 @@
+from backend.app import config
 from fastapi import Response
 from backend.app.routes.gui_proxy import router as gui_proxy_router, issue_gui_url
 import asyncio
 import docker
-from dotenv import load_dotenv
-load_dotenv()
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -139,10 +138,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://labs.wibyte.in",
-        "http://200.234.44.47:4173",
-    ],
+    allow_origins=config.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -263,11 +259,11 @@ def _create_lab_unchecked(user: CurrentUser):
     student = lab_service.get_or_create_student(user.id, user.email, user.name)
     try:
         container = docker_client.containers.run(
-            "wpl-student:dev", detach=True, tty=True, stdin_open=True,
+            config.LAB_IMAGE, detach=True, tty=True, stdin_open=True,
             ports={"6080/tcp": ("127.0.0.1", 0)},
-            mem_limit="1g", # 1 GB memory limit
-            nano_cpus=250_000_000,  # 0.25 CPU limit
-            pids_limit=256, # 256 process limit
+            mem_limit=config.LAB_MEMORY,
+            nano_cpus=config.LAB_NANO_CPUS,
+            pids_limit=config.LAB_PIDS_LIMIT,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to create lab container: {exc}")

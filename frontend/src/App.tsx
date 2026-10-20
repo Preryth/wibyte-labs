@@ -38,7 +38,7 @@ async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}) {
   if (data.session?.access_token) {
     headers.set("Authorization", `Bearer ${data.session.access_token}`);
   }
-  return window.fetch(input, { ...init, headers });
+  return window.fetch(input, { credentials: "include", ...init, headers });
 }
 
 
