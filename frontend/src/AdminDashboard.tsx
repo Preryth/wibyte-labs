@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 import "./AdminDashboard.css";
 
-type Section = "Overview" | "Users" | "Active labs" | "Platform health" | "Activity history";
+type Section = "Overview" | "Users" | "Notifications" | "Active labs" | "Platform health" | "Activity history";
 type Resources = {
   cpu_percent: number; cpu_cores: number; load_average: number[];
   memory_used: number; memory_total: number; disk_used: number; disk_total: number;
@@ -30,7 +30,11 @@ type Service = {
 type Usage = {
   cpu_percent: number; memory_used: number; memory_limit: number; processes: number;
 };
-const sections: Section[] = ["Overview", "Users", "Active labs", "Platform health", "Activity history"];
+type AdminNotification = {
+  id: number; created_at: string; category: string; severity: string;
+  title: string; message: string; target_id: string | null; unread: boolean;
+};
+const sections: Section[] = ["Overview", "Users", "Notifications", "Active labs", "Platform health", "Activity history"];
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { data } = await supabase.auth.getSession();
@@ -90,6 +94,11 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
   const [students, setStudents] = useState<Student[]>([]);
   const [labs, setLabs] = useState<Lab[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadOnly, setUnreadOnly] = useState(false);
+  const [notificationWarning, setNotificationWarning] = useState("");
+  const notificationVersionRef = useRef(0);
   const [services, setServices] = useState<Service[]>([]);
   const [updated, setUpdated] = useState("");
   const [usage, setUsage] = useState<Record<string, Usage>>({});
@@ -110,6 +119,39 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
   useEffect(() => {
     if (!email) return;
     let active = true;
+    let inFlight = false;
+    async function checkNotifications() {
+      if (inFlight || document.hidden) return;
+      inFlight = true;
+      const version = notificationVersionRef.current;
+      try {
+        const result = await api<{ unread_count: number; warning: string | null }>(
+          "/notifications/summary"
+        );
+        if (active && version === notificationVersionRef.current) {
+          setUnreadCount(result.unread_count);
+          setNotificationWarning(result.warning ?? "");
+        }
+      } catch {
+        if (active) setNotificationWarning("Could not refresh notifications. Please retry.");
+      } finally {
+        inFlight = false;
+      }
+    }
+    const onFocus = () => { void checkNotifications(); };
+    void checkNotifications();
+    const timer = window.setInterval(() => void checkNotifications(), 30000);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [email, reload]);
+
+  useEffect(() => {
+    if (!email) return;
+    let active = true;
     setLoading(true);
     setError("");
     async function load() {
@@ -125,6 +167,17 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
         } else if (section === "Active labs") {
           const data = await api<{ labs: Lab[]; total: number }>(`/labs?page=${page}`);
           if (active) { setLabs(data.labs); setTotal(data.total); }
+        } else if (section === "Notifications") {
+          const data = await api<{
+            notifications: AdminNotification[]; total: number;
+            unread_count: number; warning: string | null;
+          }>(`/notifications?page=${page}&unread=${unreadOnly}`);
+          if (active) {
+            setNotifications(data.notifications);
+            setTotal(data.total);
+            setUnreadCount(data.unread_count);
+            setNotificationWarning(data.warning ?? "");
+          }
         } else if (section === "Activity history") {
           const data = await api<{ events: Event[]; total: number }>(`/activity?page=${page}`);
           if (active) { setEvents(data.events); setTotal(data.total); }
@@ -141,7 +194,7 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
     }
     void load();
     return () => { active = false; };
-  }, [email, section, page, query, filter, reload]);
+  }, [email, section, page, query, filter, reload, unreadOnly]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -149,6 +202,38 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
     }, section === "Platform health" ? 60000 : 30000);
     return () => window.clearInterval(timer);
   }, [section]);
+
+  async function markNotificationsRead(id?: number) {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    notificationVersionRef.current += 1;
+    setBusy(true);
+    setError("");
+    try {
+      await api(id === undefined
+        ? "/notifications/read-all"
+        : `/notifications/${id}/read`, { method: "POST" });
+      setNotifications(current => current.map(item =>
+        id === undefined || item.id === id ? { ...item, unread: false } : item
+      ));
+      setUnreadCount(current => id === undefined ? 0 : Math.max(0, current - 1));
+      setReload(value => value + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not mark notifications read.");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  function viewNotification(item: AdminNotification) {
+    if (item.unread) void markNotificationsRead(item.id);
+    setSection(item.category === "labs" ? "Active labs" : "Users");
+    setPage(1);
+    setFilter("all");
+    setQuery("");
+    setSearch("");
+  }
 
   async function changeStudent(student: Student, action: string) {
     if (busyRef.current) return;
@@ -294,7 +379,7 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
   </main>;
 
   const metrics = overview?.resources;
-  const paginated = ["Users", "Active labs", "Activity history"].includes(section);
+  const paginated = ["Users", "Notifications", "Active labs", "Activity history"].includes(section);
 
   return <main className="admin-dashboard">
     <header className="wb-admin-header">
@@ -310,6 +395,11 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
           className={section === item ? "wb-admin-selected" : ""}
           onClick={() => { setSection(item); setPage(1); setError(""); setUpdated(""); }}>
           {item}
+          {item === "Notifications" && unreadCount > 0 && (
+            <span className="wb-admin-notification-count">
+              {unreadCount > 99 ? "99+" : unreadCount}
+            </span>
+          )}
         </button>)}
       </nav>
       <section className="wb-admin-content">
@@ -355,7 +445,7 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
 
         {section === "Users" && <>
           <div className="wb-admin-title-row">
-            <p className="wb-admin-note">Manage accounts or promote an approved student to admin.</p>
+            <p className="wb-admin-note">Pending approval requests appear first. Manage access or add administrators.</p>
             <button disabled={busy} onClick={() => void grantAdmin()}>Add admin by email</button>
           </div>
           <form className="wb-admin-search" onSubmit={event => {
@@ -442,6 +532,55 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
             {service.latency_ms !== null && <small>{service.latency_ms} ms</small>}
           </div>)}
         </div>}
+
+        {section === "Notifications" && <>
+          <div className="wb-admin-title-row">
+            <label className="wb-admin-unread-filter">
+              <input type="checkbox" checked={unreadOnly}
+                onChange={event => { setUnreadOnly(event.target.checked); setPage(1); }} />
+              Unread only
+            </label>
+            <button disabled={busy || unreadCount === 0}
+              onClick={() => void markNotificationsRead()}>
+              Mark all as read
+            </button>
+          </div>
+          <p className="wb-admin-note">
+            Important account and lab updates. Read status is personal to your admin account.
+          </p>
+          {notificationWarning && (
+            <div className="wb-admin-warning" role="status">{notificationWarning}</div>
+          )}
+          <div className="wb-admin-notifications">
+            {notifications.map(item => <article key={item.id}
+              className={`wb-admin-notification ${item.unread ? "wb-admin-notification-unread" : ""}`}>
+              <div className="wb-admin-title-row">
+                <div>
+                  <h3>{item.title}</h3>
+                  <small>{date(item.created_at)}{item.unread ? " · Unread" : ""}</small>
+                </div>
+                <span className={`wb-admin-badge ${
+                  item.severity === "error" ? "wb-admin-bad" :
+                  item.severity === "warning" ? "wb-admin-warn" :
+                  item.severity === "success" ? "wb-admin-good" : ""
+                }`}>{item.severity}</span>
+              </div>
+              <p>{item.message}</p>
+              <div className="wb-admin-row-actions">
+                <button onClick={() => viewNotification(item)} disabled={busy}>
+                  {item.category === "labs" ? "View labs" : "View users"}
+                </button>
+                {item.unread && <button disabled={busy}
+                  onClick={() => void markNotificationsRead(item.id)}>Mark as read</button>}
+              </div>
+            </article>)}
+            {!loading && !notifications.length && (
+              <div className="wb-admin-card wb-admin-empty">
+                {unreadOnly ? "You're all caught up." : "No notifications yet."}
+              </div>
+            )}
+          </div>
+        </>}
 
         {section === "Activity history" && <>
           <p className="wb-admin-note">Events are recorded from dashboard installation onward. Times use your browser's time zone.</p>

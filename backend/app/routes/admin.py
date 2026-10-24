@@ -107,6 +107,38 @@ def overview(user: AdminUser):
     }
 
 
+def pending_first_profiles(params, status):
+    if status != "all":
+        return supabase("GET", params)
+
+    def count(extra):
+        _, content_range = supabase("GET", {
+            **params, "select": "id", "offset": "0", "limit": "1", **extra,
+        })
+        value = content_range.rsplit("/", 1)[-1]
+        if not value.isdigit():
+            raise HTTPException(status_code=503, detail="User totals are unavailable.")
+        return int(value)
+
+    pending = count({"approval_status": "eq.pending"})
+    total = count({})
+    offset, limit = int(params["offset"]), int(params["limit"])
+    rows = []
+    if offset < pending:
+        rows, _ = supabase("GET", {
+            **params, "approval_status": "eq.pending",
+            "limit": str(min(limit, pending - offset)),
+        })
+    if len(rows) < limit:
+        remaining, _ = supabase("GET", {
+            **params, "approval_status": "neq.pending",
+            "offset": str(max(0, offset - pending)),
+            "limit": str(limit - len(rows)),
+        })
+        rows.extend(remaining)
+    return rows, f"*/{total}"
+
+
 @router.get("/students")
 def students(
     user: AdminUser, q: str = Query(default="", max_length=120),
@@ -125,7 +157,7 @@ def students(
         if not term:
             return {"students": [], "total": 0, "page": page}
         params["email"] = "ilike.*" + term.replace("_", r"\_") + "*"
-    rows, content_range = supabase("GET", params)
+    rows, content_range = pending_first_profiles(params, status)
     with connection() as db:
         for row in rows:
             local = db.execute("""
@@ -298,6 +330,7 @@ def delete_account(student_id: UUID, payload: AccountDeletion, user: AdminUser):
                 "lab_timeout_events", "admin_suspensions",
             ):
                 db.execute(f"DELETE FROM {table} WHERE student_id = ?", (target,))
+            db.execute("DELETE FROM admin_notification_reads WHERE admin_id = ?", (target,))
             db.execute("DELETE FROM students WHERE id = ?", (target,))
             # Supabase profiles are removed by their verified ON DELETE CASCADE.
             delete_auth_user(target)
@@ -527,3 +560,122 @@ def install_activity_tracking(app):
         if path.startswith("/admin/"):
             response.headers["Cache-Control"] = "no-store"
         return response
+
+
+# Notifications are generated from important activity.
+# New signups are detected while the dashboard polls this endpoint.
+from threading import Lock
+_notification_sync_lock = Lock()
+_notification_sync_at = 0.0
+_notification_sync_warning = None
+
+
+def sync_pending_notifications():
+    global _notification_sync_at, _notification_sync_warning
+    if not _notification_sync_lock.acquire(blocking=False):
+        return _notification_sync_warning
+    try:
+        if time.monotonic() - _notification_sync_at < 30:
+            return _notification_sync_warning
+        profiles = []
+        for page in range(10):
+            rows, content_range = supabase("GET", {
+                "select": "id,email",
+                "approval_status": "eq.pending",
+                "order": "created_at.desc,id.asc",
+                "limit": "500", "offset": str(page * 500),
+            })
+            profiles.extend(rows)
+            total = content_range.rsplit("/", 1)[-1]
+            if total.isdigit() and len(profiles) >= int(total):
+                break
+            if len(rows) < 500:
+                break
+        else:
+            raise RuntimeError("Pending request synchronization incomplete")
+        from backend.app.services.admin_notification_service import observe_pending
+        with connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            observe_pending(db, profiles)
+        _notification_sync_warning = None
+    except Exception:
+        _notification_sync_warning = "Notifications are available, but new approval requests could not be refreshed."
+    finally:
+        _notification_sync_at = time.monotonic()
+        _notification_sync_lock.release()
+    return _notification_sync_warning
+
+
+def unread_notification_count(db, admin_id):
+    return db.execute("""
+        SELECT COUNT(*) FROM admin_notifications n
+        LEFT JOIN admin_notification_reads r
+          ON r.notification_id = n.id AND r.admin_id = ?
+        WHERE r.notification_id IS NULL
+    """, (admin_id,)).fetchone()[0]
+
+
+@router.get("/notifications/summary")
+def notification_summary(user: AdminUser):
+    warning = sync_pending_notifications()
+    with connection() as db:
+        count = unread_notification_count(db, user.id)
+    return {"unread_count": count, "warning": warning}
+
+
+@router.get("/notifications")
+def notifications(
+    user: AdminUser, page: int = Query(default=1, ge=1), unread: bool = False,
+):
+    warning = sync_pending_notifications()
+    where = "WHERE r.notification_id IS NULL" if unread else ""
+    with connection() as db:
+        total = db.execute(f"""
+            SELECT COUNT(*) FROM admin_notifications n
+            LEFT JOIN admin_notification_reads r
+              ON r.notification_id = n.id AND r.admin_id = ?
+            {where}
+        """, (user.id,)).fetchone()[0]
+        rows = db.execute(f"""
+            SELECT n.*, CASE WHEN r.notification_id IS NULL THEN 1 ELSE 0 END AS unread
+            FROM admin_notifications n
+            LEFT JOIN admin_notification_reads r
+              ON r.notification_id = n.id AND r.admin_id = ?
+            {where}
+            ORDER BY n.id DESC LIMIT 50 OFFSET ?
+        """, (user.id, (page - 1) * 50)).fetchall()
+        count = unread_notification_count(db, user.id)
+    result = []
+    for row in rows:
+        item = dict(row)
+        item.pop("source_key", None)
+        item["unread"] = bool(item["unread"])
+        result.append(item)
+    return {
+        "notifications": result, "unread_count": count,
+        "total": total, "page": page, "warning": warning,
+    }
+
+
+@router.post("/notifications/read-all")
+def read_all_notifications(user: AdminUser):
+    with connection() as db:
+        db.execute("""
+            INSERT OR IGNORE INTO admin_notification_reads(notification_id, admin_id, read_at)
+            SELECT id, ?, ? FROM admin_notifications
+        """, (user.id, datetime.now(timezone.utc).isoformat()))
+    return {"status": "read"}
+
+
+@router.post("/notifications/{notification_id}/read")
+def read_notification(notification_id: int, user: AdminUser):
+    with connection() as db:
+        if db.execute(
+            "SELECT 1 FROM admin_notifications WHERE id = ?", (notification_id,)
+        ).fetchone() is None:
+            raise HTTPException(status_code=404, detail="Notification not found.")
+        db.execute("""
+            INSERT OR IGNORE INTO admin_notification_reads(notification_id, admin_id, read_at)
+            VALUES (?, ?, ?)
+        """, (notification_id, user.id, datetime.now(timezone.utc).isoformat()))
+    return {"status": "read"}

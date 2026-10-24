@@ -44,7 +44,30 @@ def initialize():
             );
             CREATE INDEX IF NOT EXISTS ix_admin_activity_time
             ON admin_activity(occurred_at);
+
+            CREATE TABLE IF NOT EXISTS admin_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                category TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                title TEXT NOT NULL,
+                message TEXT NOT NULL,
+                target_id TEXT,
+                source_key TEXT NOT NULL UNIQUE
+            );
+            CREATE TABLE IF NOT EXISTS admin_notification_reads (
+                notification_id INTEGER NOT NULL,
+                admin_id TEXT NOT NULL,
+                read_at TEXT NOT NULL,
+                PRIMARY KEY(notification_id, admin_id)
+            );
+            CREATE TABLE IF NOT EXISTS admin_notification_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
         """)
+        from backend.app.services.admin_notification_service import backfill
+        backfill(db)
 
 
 def is_suspended(student_id):
@@ -57,15 +80,29 @@ def is_suspended(student_id):
 
 
 def activity(action, actor=None, target=None, outcome="success", details=None):
+    at = datetime.now(timezone.utc).isoformat()
+    actor_email = getattr(actor, "email", None)
+    details = details or {}
     with connection() as db:
-        db.execute(
+        cursor = db.execute(
             """INSERT INTO admin_activity
             (occurred_at, actor_id, actor_email, action, target_id, outcome, details)
             VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (datetime.now(timezone.utc).isoformat(),
-             getattr(actor, "id", None), getattr(actor, "email", None),
-             action, target, outcome, json.dumps(details or {})),
+            (at, getattr(actor, "id", None), actor_email,
+             action, target, outcome, json.dumps(details)),
         )
+        db.execute("SAVEPOINT create_notification")
+        try:
+            from backend.app.services.admin_notification_service import from_activity, set_state
+            from_activity(
+                db, cursor.lastrowid, at, action, actor_email, target, outcome, details
+            )
+            set_state(db, "activity-checkpoint", str(cursor.lastrowid))
+            db.execute("RELEASE create_notification")
+        except Exception:
+            db.execute("ROLLBACK TO create_notification")
+            db.execute("RELEASE create_notification")
+            log.exception("Could not create admin notification")
 
 
 initialize()
