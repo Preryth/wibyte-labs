@@ -4,6 +4,7 @@ from typing import Annotated
 
 import requests
 from fastapi import Depends, HTTPException, Request, status
+from backend.app.services.admin_store import is_suspended
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
 SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
@@ -14,6 +15,7 @@ class AuthenticatedUser:
     email: str | None
     name: str | None
     approval_status: str
+    role: str = "student"
 
 
 def _configuration_error():
@@ -38,7 +40,7 @@ def authenticate_token(token: str) -> AuthenticatedUser:
     try:
         profile_response = requests.get(
             f"{SUPABASE_URL}/rest/v1/profiles",
-            params={"id": f"eq.{user_id}", "select": "approval_status"},
+            params={"id": f"eq.{user_id}", "select": "approval_status,role"},
             headers=headers,
             timeout=10,
         )
@@ -50,12 +52,16 @@ def authenticate_token(token: str) -> AuthenticatedUser:
     approval_status = profiles[0].get("approval_status", "pending") if profiles else "pending"
     if approval_status != "approved":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Your WiByte Labs account is not approved.")
+    if is_suspended(user_id):
+        raise HTTPException(status_code=403, detail="Your account access is suspended.")
+    role = profiles[0].get("role", "student") if profiles else "student"
     metadata = user.get("user_metadata") or {}
     return AuthenticatedUser(
         id=user_id,
         email=user.get("email"),
         name=metadata.get("full_name") or metadata.get("name"),
         approval_status=approval_status,
+        role=role,
     )
 
 

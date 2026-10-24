@@ -1,0 +1,92 @@
+.admin-dashboard {
+  min-height: 100vh; width: 100%; box-sizing: border-box;
+  background: #0c1018; color: #e5e7eb; font-family: Inter, system-ui, sans-serif;
+}
+.admin-dashboard * { box-sizing: border-box; }
+.admin-dashboard button, .admin-dashboard input, .admin-dashboard select { font: inherit; }
+.admin-dashboard button, .admin-dashboard a { transition: background .15s, border-color .15s; }
+.admin-dashboard button {
+  border: 1px solid #353b4b; border-radius: 8px; padding: 8px 13px;
+  background: #1b2230; color: #e5e7eb; cursor: pointer; white-space: nowrap;
+}
+.admin-dashboard button:hover:not(:disabled) { background: #2c2343; border-color: #8b5cf6; }
+.admin-dashboard button:disabled { opacity: .45; cursor: default; }
+.admin-dashboard button:focus-visible, .admin-dashboard a:focus-visible,
+.admin-dashboard input:focus-visible, .admin-dashboard select:focus-visible {
+  outline: 2px solid #a78bfa; outline-offset: 3px;
+}
+.admin-dashboard a { color: #c4b5fd; text-decoration: none; }
+.admin-dashboard h1, .admin-dashboard h2, .admin-dashboard h3 { margin: 0; color: #f8fafc; }
+.admin-dashboard h1 { font-size: 25px; }
+.admin-dashboard h2 { font-size: 23px; }
+.admin-dashboard h3 { font-size: 16px; }
+.admin-dashboard small { display: block; color: #a6b0c3; font-size: 12px; line-height: 1.6; }
+.wb-admin-eyebrow { font-size: 11px; letter-spacing: .18em; color: #bca3ff; font-weight: 700; margin-bottom: 5px; }
+.wb-admin-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 24px 32px; border-bottom: 1px solid #252c3b; }
+.wb-admin-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; font-size: 13px; }
+.wb-admin-header-actions > span { color: #a6b0c3; }
+.wb-admin-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); }
+.wb-admin-layout > nav { padding: 24px 16px; border-right: 1px solid #252c3b; }
+.wb-admin-layout > nav button { display: block; width: 100%; text-align: left; background: transparent; border-color: transparent; margin-bottom: 8px; }
+.wb-admin-layout > nav .wb-admin-selected { background: #282039; color: #ddd0ff; border-color: #51406f; }
+.wb-admin-content { padding: 28px 32px; min-width: 0; }
+.wb-admin-title-row { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 22px; }
+.wb-admin-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; }
+.wb-admin-stat, .wb-admin-card { background: #131b28; border: 1px solid #293244; border-radius: 12px; padding: 20px; }
+.wb-admin-stat span { color: #a6b0c3; font-size: 13px; }
+.wb-admin-stat strong { display: block; font-size: 32px; font-weight: 650; margin-top: 8px; }
+.wb-admin-card { margin-bottom: 18px; }
+.wb-admin-meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-top: 22px; }
+.wb-admin-meter > div { display: flex; justify-content: space-between; font-size: 13px; }
+.wb-admin-meter progress { width: 100%; height: 8px; margin: 12px 0 6px; accent-color: #a78bfa; }
+.wb-admin-error, .wb-admin-warning { padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; line-height: 1.6; }
+.wb-admin-error { background: #351c27; border: 1px solid #73384a; color: #fecdd3; }
+.wb-admin-warning { background: #31291c; border: 1px solid #6d5830; color: #fde68a; }
+.wb-admin-search { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+.wb-admin-search input, .wb-admin-search select { background: #131b28; color: #e5e7eb; border: 1px solid #353b4b; border-radius: 8px; padding: 10px 12px; }
+.wb-admin-search input { flex: 1; min-width: 180px; }
+.wb-admin-table-wrap { overflow-x: auto; border: 1px solid #293244; border-radius: 10px; background: #131b28; }
+.admin-dashboard table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.admin-dashboard th { background: #182131; color: #a6b0c3; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.admin-dashboard th, .admin-dashboard td { padding: 15px 16px; border-bottom: 1px solid #263043; vertical-align: top; }
+.admin-dashboard td { overflow-wrap: anywhere; }
+.admin-dashboard tbody tr:last-child td { border-bottom: 0; }
+.wb-admin-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.wb-admin-row-actions button { font-size: 12px; padding: 6px 9px; }
+.wb-admin-badge { display: inline-block; border-radius: 20px; padding: 4px 9px; font-size: 11px; white-space: nowrap; background: #283144; color: #cbd5e1; }
+.wb-admin-good { background: #15372e; color: #86efac; }
+.wb-admin-bad { background: #421f2b; color: #fda4af; }
+.wb-admin-warn { background: #3b301c; color: #fde68a; }
+.wb-admin-health-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.wb-admin-health-grid .wb-admin-card { margin: 0; }
+.wb-admin-health-grid .wb-admin-title-row { margin-bottom: 12px; }
+.wb-admin-health-grid p, .wb-admin-note { color: #a6b0c3; font-size: 13px; line-height: 1.7; }
+.wb-admin-inline-warning { color: #fde68a; font-size: 12px; }
+.wb-admin-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 14px; margin-top: 20px; font-size: 13px; }
+.wb-admin-empty { text-align: center; padding: 28px; color: #a6b0c3; }
+.wb-admin-access { display: grid; place-items: center; padding: 24px; }
+.wb-admin-access .wb-admin-card { max-width: 560px; }
+.wb-admin-access h1 { margin: 10px 0 20px; }
+.wb-admin-access button { margin-left: 16px; }
+@media (max-width: 1000px) {
+  .wb-admin-header { align-items: flex-start; flex-direction: column; }
+  .wb-admin-layout { grid-template-columns: 1fr; }
+  .wb-admin-layout > nav { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid #252c3b; gap: 8px; padding: 12px 20px; }
+  .wb-admin-layout > nav button { width: auto; margin: 0; }
+  .wb-admin-meters { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .wb-admin-header, .wb-admin-content { padding: 20px 16px; }
+  .wb-admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wb-admin-health-grid { grid-template-columns: 1fr; }
+}
+
+/* Dashboard page scrolling */
+.admin-dashboard {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}

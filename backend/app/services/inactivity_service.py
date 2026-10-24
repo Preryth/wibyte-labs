@@ -97,7 +97,7 @@ class InactivityService:
             }
         return None
 
-    def cleanup_lab(self, lab_id, container_id):
+    def cleanup_lab(self, lab_id, container_id, *, force=False):
         with closing(sqlite3.connect(self.db_path, timeout=30)) as db:
             row = db.execute(
                 "SELECT student_id FROM labs WHERE id = ? AND container_id = ?",
@@ -106,29 +106,33 @@ class InactivityService:
         if row is None:
             return False
         with student_lab_lock(row[0]):
-            return self._cleanup_locked(lab_id, container_id)
+            return self._cleanup_locked(lab_id, container_id, force=force)
 
-    def _cleanup_locked(self, lab_id, container_id):
+    def _cleanup_locked(self, lab_id, container_id, *, force=False):
         try:
             container = self.docker_client.containers.get(container_id)
         except docker.errors.NotFound:
             container = None
 
-        gui_activity = self.gui_last_activity(container) if container else None
+        if force and container is None:
+            return False
+        gui_activity = self.gui_last_activity(container) if container and not force else None
         db = sqlite3.connect(self.db_path, timeout=30)
         frozen = False
         removed = False
         try:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT student_id, status, last_activity_at, github_repository_id "
+                "SELECT student_id, status, last_activity_at, github_repository_id, "
+                "EXISTS(SELECT 1 FROM github_connections g "
+                "WHERE g.student_id = labs.student_id) "
                 "FROM labs WHERE id = ? AND container_id = ?",
                 (lab_id, container_id),
             ).fetchone()
             if row is None or row[1] not in ("running", "auto_saving"):
                 return False
 
-            owner, status, timestamp, repository_id = row
+            owner, status, timestamp, repository_id, github_connected = row
             last_activity = self.as_utc(timestamp)
             if status == "running":
                 if gui_activity and gui_activity > last_activity:
@@ -138,7 +142,7 @@ class InactivityService:
                         (last_activity.replace(tzinfo=None).isoformat(" "), lab_id),
                     )
                 cutoff = datetime.now(timezone.utc) - self.INACTIVITY_TIMEOUT
-                if last_activity > cutoff:
+                if last_activity > cutoff and not force:
                     db.commit()
                     return False
 
@@ -169,8 +173,16 @@ class InactivityService:
                     )
                     outcome = "unavailable"
                 else:
-                    message = self._success_message(committed)
+                    message = self._success_message(committed, force=force)
                     outcome = "saved"
+            elif not github_connected and not force:
+                message = (
+                    "Your lab was closed due to inactivity. No GitHub account "
+                    "was connected, so no commit or push was made."
+                )
+                outcome = "terminated_no_github"
+                container.remove(force=True)
+                removed = True
             else:
                 if not repository_id:
                     raise RuntimeError("No GitHub repository is connected.")
@@ -186,7 +198,11 @@ class InactivityService:
                 git = self.git_service
                 git_status = git.status(lab_id)
                 if not git_status["clean"]:
-                    git.commit(lab_id, "Auto-save due to lab inactivity")
+                    git.commit(
+                        lab_id,
+                        "Auto-save before administrator termination"
+                        if force else "Auto-save due to lab inactivity",
+                    )
                     committed = True
                     db.execute(
                         "UPDATE lab_timeout_events SET commit_created = 1 WHERE lab_id = ?",
@@ -221,7 +237,7 @@ class InactivityService:
                 if not git.status(lab_id)["clean"]:
                     raise RuntimeError("Files changed while saving; preserving the lab.")
 
-                message = self._success_message(committed)
+                message = self._success_message(committed, force=force)
                 destination = getattr(repository, "full_name", None)
                 if destination:
                     message += f" Repository: {destination}."
@@ -246,6 +262,15 @@ class InactivityService:
                 (lab_id, container_id),
             )
             db.commit()
+            try:
+                from backend.app.services.admin_store import activity
+                activity(
+                    "lab.admin_save_close" if force else "lab.inactivity_close", target=lab_id,
+                    outcome="success" if outcome in ("saved", "terminated_no_github") else "failed",
+                    details={"student_id": owner, "save_outcome": outcome},
+                )
+            except Exception:
+                log.warning("Could not record inactivity history for %s", lab_id)
             log.warning("Closed inactive lab %s; result=%s", lab_id, outcome)
             return True
         except Exception as exc:
@@ -265,6 +290,14 @@ class InactivityService:
             )
             db.commit()
             # Avoid logging Git output that could contain credentials.
+            try:
+                from backend.app.services.admin_store import activity
+                activity(
+                    "lab.admin_save" if force else "lab.inactivity_save",
+                    target=lab_id, outcome="failed",
+                )
+            except Exception:
+                log.warning("Could not record inactivity history for %s", lab_id)
             log.warning("Inactivity save failed for %s (%s); preserving lab",
                         lab_id, type(exc).__name__)
             return False
@@ -277,7 +310,15 @@ class InactivityService:
             db.close()
 
     @staticmethod
-    def _success_message(committed):
+    def _success_message(committed, *, force=False):
+        if force:
+            return (
+                "Your lab was closed by an administrator. Saved files were "
+                "committed and pushed to GitHub before closing."
+                if committed else
+                "Your lab was closed by an administrator. All saved work was "
+                "verified as pushed to GitHub before closing; no new commit was needed."
+            )
         if committed:
             return (
                 "Your lab was closed due to inactivity. Saved files were "

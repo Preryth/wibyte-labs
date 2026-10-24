@@ -16,6 +16,7 @@ import Terminal, {
 
 import CodeEditor from "./CodeEditor";
 import SettingsPanel from "./SettingsPanel";
+import AdminDashboard from "./AdminDashboard";
 
 import "./App.css";
 import LoginScreen from "./LoginScreen";
@@ -3195,6 +3196,13 @@ function App() {
 
   if (!session) {
     return <LoginScreen />;
+  }
+
+  if (
+    window.location.pathname === "/dashboard" ||
+    window.location.pathname === "/dashboard/"
+  ) {
+    return <AdminDashboard onSignOut={handleSignOut} />;
   }
 
   if (approvalStatus !== "approved") {

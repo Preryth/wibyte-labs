@@ -216,6 +216,10 @@ app.include_router(
 from backend.app.routes.account_lookup import router as account_lookup_router
 app.include_router(account_lookup_router)
 
+from backend.app.routes.admin import router as admin_router, install_activity_tracking
+app.include_router(admin_router)
+install_activity_tracking(app)
+
 
 @app.get("/health")
 def health_check():
