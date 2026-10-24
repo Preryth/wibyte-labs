@@ -152,18 +152,63 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
 
   async function changeStudent(student: Student, action: string) {
     if (busyRef.current) return;
-    if (!window.confirm(`${label(action)} access for ${student.email}? Existing lab files will be kept.`)) return;
+    const confirmation = action === "reject"
+      ? `Reject ${student.email}?\n\nTheir Supabase status will become rejected and they will lose access to the lab and dashboard. Their account and existing lab files will be kept. They can request approval again, or you can accept them later. This does not delete their account.`
+      : `${label(action)} access for ${student.email}? Existing lab files will be kept.`;
+    if (!window.confirm(confirmation)) return;
     busyRef.current = true;
     setBusy(true);
     setError("");
     try {
       await api(`/students/${student.id}/access`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, confirm_rejection: action === "reject" }),
       });
       setReload(value => value + 1);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not update access.");
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function manageAccount(student: Student, operation: "delete" | "removeAdmin") {
+    if (busyRef.current) return;
+    let confirmationEmail = "";
+    if (operation === "delete") {
+      const entered = window.prompt(
+        `Permanently delete ${student.email}?\n\nThis removes their login, profile, and local GitHub connection. They must sign up again to return. Repositories already on GitHub are not deleted.\n\nAny remaining labs must be closed first.\nType their full email to confirm:`
+      );
+      if (entered === null) return;
+      confirmationEmail = entered.trim();
+      if (confirmationEmail.toLowerCase() !== student.email.toLowerCase()) {
+        setError("Email did not match. No account was deleted.");
+        return;
+      }
+    } else if (!window.confirm(
+      `Remove administrator access from ${student.email}?\n\nThey become a normal student. Their account, approval status, lab files, and GitHub connection are kept.`
+    )) return;
+
+    busyRef.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      if (operation === "delete") {
+        await api(`/students/${student.id}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmation_email: confirmationEmail }),
+        });
+        alert("Account deleted. This person must sign up again to return.");
+      } else {
+        await api(`/administrators/${student.id}/remove`, { method: "POST" });
+        alert("Admin access removed. The account is now a student account.");
+      }
+      setPage(1);
+      setReload(value => value + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update this account.");
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -334,7 +379,9 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
               <td>{student.active_labs}</td>
               <td>{student.id !== adminId && ["student", "admin"].includes(student.role) ? <div className="wb-admin-row-actions">
                 {student.approval_status !== "approved" &&
-                  <button disabled={busy} onClick={() => void changeStudent(student, "approve")}>Approve</button>}
+                  <button disabled={busy} onClick={() => void changeStudent(student, "approve")}>
+                    {student.approval_status === "rejected" ? "Accept" : "Approve"}
+                  </button>}
                 {student.approval_status !== "rejected" &&
                   <button disabled={busy} onClick={() => void changeStudent(student, "reject")}>Reject</button>}
                 <button disabled={busy} onClick={() => void changeStudent(student, student.suspended ? "restore" : "suspend")}>
@@ -342,6 +389,18 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
                 </button>
                 {student.role === "student" && student.approval_status === "approved" && !student.suspended && (
                   <button disabled={busy} onClick={() => void grantAdmin(student)}>Make admin</button>
+                )}
+                {student.role === "admin" && (
+                  <button disabled={busy} onClick={() => void manageAccount(student, "removeAdmin")}>
+                    Remove admin
+                  </button>
+                )}
+                {student.approval_status === "rejected" && (
+                  <button disabled={busy}
+                    style={{ color: "#fda4af", borderColor: "#73384a" }}
+                    onClick={() => void manageAccount(student, "delete")}>
+                    Delete account
+                  </button>
                 )}
               </div> : <small>{student.id === adminId ? "Your account" : "No actions available"}</small>}</td>
             </tr>)}</tbody>

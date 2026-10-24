@@ -23,7 +23,7 @@ def _configuration_error():
         raise HTTPException(status_code=500, detail="Supabase backend authentication is not configured.")
 
 
-def authenticate_token(token: str) -> AuthenticatedUser:
+def verify_identity(token: str) -> dict:
     _configuration_error()
     headers = {"apikey": SUPABASE_PUBLISHABLE_KEY, "Authorization": f"Bearer {token}"}
     try:
@@ -36,6 +36,14 @@ def authenticate_token(token: str) -> AuthenticatedUser:
     user_id = user.get("id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Authenticated user is missing an ID.")
+
+    return user
+
+
+def authenticate_token(token: str) -> AuthenticatedUser:
+    user = verify_identity(token)
+    user_id = user["id"]
+    headers = {"apikey": SUPABASE_PUBLISHABLE_KEY, "Authorization": f"Bearer {token}"}
 
     try:
         profile_response = requests.get(

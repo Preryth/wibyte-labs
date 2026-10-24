@@ -2996,242 +2996,196 @@ function WorkspaceDirectoryTree({
 }
 
 
-type ApprovalStatus =
-  | "pending"
-  | "approved"
-  | "declined";
-
+type ApprovalStatus = "pending" | "approved" | "rejected" | "declined";
 
 function AccountStatus({
-  status,
-  onSignOut,
+  status, suspended, onSignOut, onRequestApproval,
 }: {
   status: ApprovalStatus;
+  suspended: boolean;
   onSignOut: () => void;
+  onRequestApproval: () => Promise<void>;
 }) {
-  const declined =
-    status === "declined";
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const rejected = status === "rejected" || status === "declined";
 
-  return (
-    <main className="account-status-screen">
-      <section className="account-status-card">
-        <h1>
-          {declined
-            ? "Account access unavailable"
-            : "Your account is awaiting approval"}
-        </h1>
+  async function requestAgain() {
+    if (submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await onRequestApproval();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not submit your request.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
-        <p>
-          {declined
-            ? "This account has not been granted access to WiByte Python Lab. Contact WiByte if you believe this is a mistake."
-            : "Your account has been created successfully. A WiByte administrator must approve it before you can use WiByte Python Lab."}
-        </p>
-
-        <button
-          type="button"
-          onClick={onSignOut}
-        >
-          Sign out
+  return <main className="account-status-screen">
+    <section className="account-status-card">
+      <h1>{suspended
+        ? "Your account is suspended"
+        : rejected
+          ? "Your account approval request was rejected"
+          : "Your account is awaiting approval"}</h1>
+      <p>{suspended
+        ? "Contact a WiByte administrator to restore your account access."
+        : rejected
+          ? "You cannot access WiByte Python Lab right now. You can request approval again, or an administrator can accept your account."
+          : "Your approval request is pending. A WiByte administrator must approve it before you can use WiByte Python Lab. This page checks for updates automatically."}</p>
+      {error && <p role="alert" style={{ color: "#fda4af" }}>{error}</p>}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, justifyContent: "center" }}>
+        <button type="button" onClick={onSignOut} disabled={submitting}>
+          {rejected && !suspended ? "OK" : "Sign out"}
         </button>
-      </section>
-    </main>
-  );
+        {rejected && !suspended && <button type="button"
+          disabled={submitting} onClick={() => void requestAgain()}>
+          {submitting ? "Submitting..." : "Request approval again"}
+        </button>}
+      </div>
+    </section>
+  </main>;
 }
 
-
 function App() {
-  if (
-    window.location.pathname ===
-    "/reset-password"
-  ) {
+  if (window.location.pathname === "/reset-password") {
     return <ResetPasswordScreen />;
   }
 
-  const [
-    session,
-    setSession,
-  ] = useState<Session | null>(null);
-
-  const [
-    currentUser,
-    setCurrentUser,
-  ] = useState<User | null>(null);
-
-  const [
-    approvalStatus,
-    setApprovalStatus,
-  ] = useState<ApprovalStatus | null>(null);
-
-  const [
-    authLoading,
-    setAuthLoading,
-  ] = useState(true);
-
-  const loadAccountAccess =
-    useCallback(
-      async (user: User) => {
-        const {
-          data,
-          error,
-        } = await supabase
-          .from("profiles")
-          .select("approval_status")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        if (error) {
-          throw error;
-        }
-
-        return data?.approval_status as
-          | ApprovalStatus
-          | undefined;
-      },
-      []
-    );
+  const [session, setSession] = useState<Session | null>(null);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [access, setAccess] = useState<{
+    approval_status: ApprovalStatus; suspended: boolean;
+  } | null>(null);
+  const [accessError, setAccessError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const identityRef = useRef<string | null>(null);
+  const userId = session?.user.id ?? null;
 
   useEffect(() => {
     let active = true;
-
-    const applySession =
-      async (nextSession: Session | null) => {
-        if (!active) {
-          return;
-        }
-
-        setSession(nextSession);
-        setCurrentUser(
-          nextSession?.user ?? null
-        );
-
-        if (!nextSession?.user) {
-          setApprovalStatus(null);
-          setAuthLoading(false);
-          return;
-        }
-
-        try {
-          const status =
-            await loadAccountAccess(
-              nextSession.user
-            );
-
-          if (!active) {
-            return;
-          }
-
-          /*
-           * A missing profile is treated as pending.
-           * The database trigger supplied with this update
-           * normally creates the profile automatically.
-           */
-          setApprovalStatus(
-            status ?? "pending"
-          );
-        } catch (error) {
-          console.error(
-            "Failed to load account access:",
-            error
-          );
-
-          if (active) {
-            setApprovalStatus("pending");
-          }
-        } finally {
-          if (active) {
-            setAuthLoading(false);
-          }
-        }
-      };
-
-    const {
-      data: {
-        subscription,
-      },
-    } = supabase.auth.onAuthStateChange(
-      (_event, nextSession) => {
-        void applySession(nextSession);
+    function applySession(next: Session | null) {
+      if (!active) return;
+      const id = next?.user.id ?? null;
+      if (id !== identityRef.current) {
+        identityRef.current = id;
+        setAccess(null);
+        setAccessError("");
       }
+      setSession(next);
+      setSessionReady(true);
+    }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, next) => applySession(next)
     );
-
-    void supabase.auth
-      .getSession()
-      .then(({ data }) =>
-        applySession(data.session)
-      )
-      .catch((error) => {
-        console.error(
-          "Failed to load authentication session:",
-          error
-        );
-
-        if (active) {
-          setAuthLoading(false);
-        }
-      });
-
+    void supabase.auth.getSession().then(({ data }) => applySession(data.session))
+      .catch(() => { if (active) setSessionReady(true); });
     return () => {
       active = false;
       subscription.unsubscribe();
     };
-  }, [loadAccountAccess]);
+  }, []);
+
+  useEffect(() => {
+    if (!userId) return;
+    let active = true;
+    let inFlight = false;
+    async function checkAccess() {
+      if (inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        const response = await apiFetch(`${API_URL}/auth/access`);
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(typeof data?.detail === "string"
+            ? data.detail : "Could not check account access. Please retry.");
+        }
+        if (!["pending", "approved", "rejected", "declined"].includes(data?.approval_status)) {
+          throw new Error("Account approval status is unavailable.");
+        }
+        if (active) {
+          setAccess({
+            approval_status: data.approval_status,
+            suspended: Boolean(data.suspended),
+          });
+          setAccessError("");
+        }
+      } catch (err) {
+        if (active) setAccessError(
+          err instanceof Error ? err.message : "Could not check account access."
+        );
+      } finally {
+        inFlight = false;
+      }
+    }
+    const onFocus = () => { void checkAccess(); };
+    void checkAccess();
+    const timer = window.setInterval(() => void checkAccess(), 15000);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [userId, retry]);
 
   async function handleSignOut() {
-    const {
-      error,
-    } = await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    if (error) alert("Could not sign out. Please retry.");
+  }
 
-    if (error) {
-      console.error(
-        "Failed to sign out:",
-        error
-      );
+  async function requestApprovalAgain() {
+    const response = await apiFetch(`${API_URL}/auth/request-approval`, { method: "POST" });
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !["pending", "approved"].includes(data?.approval_status)) {
+      throw new Error(typeof data?.detail === "string"
+        ? data.detail : "Could not submit your approval request.");
     }
+    setAccess({ approval_status: data.approval_status, suspended: false });
+    setAccessError("");
+    setRetry(value => value + 1);
   }
 
-  if (authLoading) {
-    return (
-      <main className="auth-loading">
-        <div className="auth-loading-card">
-          Checking your sign-in...
-        </div>
-      </main>
-    );
+  if (!sessionReady) {
+    return <main className="auth-loading">
+      <div className="auth-loading-card">Checking your sign-in...</div>
+    </main>;
+  }
+  if (!session) return <LoginScreen />;
+
+  if (!access) {
+    return <main className="account-status-screen">
+      <section className="account-status-card">
+        <h1>{accessError ? "Unable to check account access" : "Checking account access..."}</h1>
+        {accessError && <>
+          <p role="alert">{accessError}</p>
+          <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button>
+          <button type="button" onClick={() => void handleSignOut()}>Sign out</button>
+        </>}
+      </section>
+    </main>;
   }
 
-  if (!session) {
-    return <LoginScreen />;
+  if (access.approval_status !== "approved" || access.suspended) {
+    return <AccountStatus
+      status={access.approval_status}
+      suspended={access.suspended}
+      onSignOut={() => void handleSignOut()}
+      onRequestApproval={requestApprovalAgain}
+    />;
   }
 
-  if (
-    window.location.pathname === "/dashboard" ||
-    window.location.pathname === "/dashboard/"
-  ) {
+  if (window.location.pathname === "/dashboard" || window.location.pathname === "/dashboard/") {
     return <AdminDashboard onSignOut={handleSignOut} />;
   }
 
-  if (approvalStatus !== "approved") {
-    return (
-      <AccountStatus
-        status={
-          approvalStatus ??
-          "pending"
-        }
-        onSignOut={() =>
-          void handleSignOut()
-        }
-      />
-    );
-  }
-
-  return (
-    <LabApp
-      key={currentUser?.id ?? "anonymous"}
-      currentUser={currentUser}
-      handleSignOut={handleSignOut}
-    />
-  );
+  return <LabApp
+    key={session.user.id}
+    currentUser={session.user}
+    handleSignOut={handleSignOut}
+  />;
 }
-
 
 export default App;

@@ -184,13 +184,22 @@ def promote_admin(payload: AdminPromotion, user: AdminUser):
 
 class StudentAction(BaseModel):
     action: Literal["approve", "reject", "suspend", "restore"]
+    confirm_rejection: bool = False
 
 
 @router.post("/students/{student_id}/access")
 def change_access(student_id: UUID, payload: StudentAction, user: AdminUser):
+    from backend.app.services.single_lab_service import student_lab_lock
+    with student_lab_lock(str(student_id)):
+        return _change_access_locked(student_id, payload, user)
+
+
+def _change_access_locked(student_id: UUID, payload: StudentAction, user: AdminUser):
     target = str(student_id)
     if target == user.id:
         raise HTTPException(status_code=400, detail="You cannot change your own access here.")
+    if payload.action == "reject" and not payload.confirm_rejection:
+        raise HTTPException(status_code=400, detail="Confirm rejecting this user first.")
     profiles, _ = supabase("GET", {"id": "eq." + target, "select": "id,email,role,approval_status"})
     if not profiles:
         raise HTTPException(status_code=404, detail="User not found.")
@@ -218,6 +227,82 @@ def change_access(student_id: UUID, payload: StudentAction, user: AdminUser):
             """, (target, int(action == "suspend"), datetime.now(timezone.utc).isoformat(), user.id))
     activity("user." + action, user, target, details={"email": profile.get("email")})
     return {"status": "updated"}
+
+
+@router.post("/administrators/{student_id}/remove")
+def remove_admin(student_id: UUID, user: AdminUser):
+    from backend.app.services.single_lab_service import student_lab_lock
+    target = str(student_id)
+    if target == user.id:
+        raise HTTPException(status_code=400, detail="You cannot remove your own admin access.")
+    with student_lab_lock(target):
+        rows, _ = supabase("GET", {"id": "eq." + target, "select": "id,email,role"})
+        if len(rows) != 1:
+            raise HTTPException(status_code=404, detail="User not found.")
+        if rows[0].get("role") != "admin":
+            raise HTTPException(status_code=409, detail="This account is no longer an admin.")
+        activity("admin.remove", user, target, "requested")
+        updated, _ = supabase(
+            "PATCH", {"id": "eq." + target, "role": "eq.admin"}, {"role": "student"},
+        )
+        if len(updated) != 1:
+            raise HTTPException(status_code=409, detail="Account changed. Refresh and retry.")
+        activity("admin.remove", user, target)
+    return {"status": "updated"}
+
+
+class AccountDeletion(BaseModel):
+    confirmation_email: str
+
+
+@router.delete("/students/{student_id}")
+def delete_account(student_id: UUID, payload: AccountDeletion, user: AdminUser):
+    from backend.app.services.account_lifecycle_service import delete_auth_user
+    from backend.app.services.single_lab_service import student_lab_lock
+
+    target = str(student_id)
+    if target == user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account.")
+    with student_lab_lock(target):
+        profiles, _ = supabase(
+            "GET", {"id": "eq." + target, "select": "id,email,role,approval_status"},
+        )
+        if len(profiles) != 1:
+            raise HTTPException(status_code=404, detail="User not found.")
+        profile = profiles[0]
+        if profile.get("approval_status") != "rejected":
+            raise HTTPException(status_code=409, detail="Only rejected accounts can be deleted.")
+        if payload.confirmation_email.strip().lower() != (profile.get("email") or "").lower():
+            raise HTTPException(status_code=400, detail="The confirmation email does not match.")
+
+        with connection() as db:
+            remaining = db.execute(
+                "SELECT COUNT(*) FROM labs WHERE student_id = ?", (target,),
+            ).fetchone()[0]
+        if remaining:
+            raise HTTPException(
+                status_code=409,
+                detail="This user still has labs. Save or terminate them before deleting the account.",
+            )
+
+        activity("user.delete", user, target, "requested", {"email": profile.get("email")})
+        # Stage local cleanup; commit it only after Supabase confirms deletion.
+        with connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute(
+                "SELECT COUNT(*) FROM labs WHERE student_id = ?", (target,),
+            ).fetchone()[0]:
+                raise HTTPException(status_code=409, detail="The user still has a lab.")
+            for table in (
+                "github_connections", "github_repositories",
+                "lab_timeout_events", "admin_suspensions",
+            ):
+                db.execute(f"DELETE FROM {table} WHERE student_id = ?", (target,))
+            db.execute("DELETE FROM students WHERE id = ?", (target,))
+            # Supabase profiles are removed by their verified ON DELETE CASCADE.
+            delete_auth_user(target)
+        activity("user.delete", user, target, details={"email": profile.get("email")})
+    return {"status": "deleted"}
 
 
 @router.get("/labs")
