@@ -1,5 +1,5 @@
 from backend.app import config
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
 
@@ -502,3 +502,10 @@ def git_pull(lab_id: str, user: CurrentUser = None):
 
 
 router.git_service = None
+
+
+@router.get("/installation-status")
+def github_installation_status(user: CurrentUser, response: Response):
+    from backend.app.services.github_installation_service import installation_status
+    response.headers["Cache-Control"] = "no-store"
+    return installation_status(user.id)

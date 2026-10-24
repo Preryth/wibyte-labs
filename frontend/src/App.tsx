@@ -16,6 +16,7 @@ import Terminal, {
 
 import CodeEditor from "./CodeEditor";
 import SettingsPanel from "./SettingsPanel";
+import GitHubInstallPrompt from "./GitHubInstallPrompt";
 import AdminDashboard from "./AdminDashboard";
 
 import "./App.css";
@@ -2762,7 +2763,11 @@ useEffect(() => {
     </section>
   </section>
 ) : (
-  <section className="empty-state">
+  <section className="empty-state wpl-onboarding-page">
+    <GitHubInstallPrompt
+      settingsOpen={settingsOpen}
+      onOpenSettings={() => setSettingsOpen(true)}
+    />
     <h2>
       No active lab
     </h2>
