@@ -193,20 +193,20 @@ def change_access(student_id: UUID, payload: StudentAction, user: AdminUser):
         raise HTTPException(status_code=400, detail="You cannot change your own access here.")
     profiles, _ = supabase("GET", {"id": "eq." + target, "select": "id,email,role,approval_status"})
     if not profiles:
-        raise HTTPException(status_code=404, detail="Student not found.")
+        raise HTTPException(status_code=404, detail="User not found.")
     profile = profiles[0]
-    if profile.get("role") != "student":
-        raise HTTPException(status_code=400, detail="This page only changes student access.")
+    if profile.get("role") not in ("student", "admin"):
+        raise HTTPException(status_code=400, detail="Unsupported account role.")
     action = payload.action
-    activity("student." + action, user, target, "requested")
+    activity("user." + action, user, target, "requested")
     if action in ("approve", "reject"):
         value = "approved" if action == "approve" else "rejected"
         updated, _ = supabase(
-            "PATCH", {"id": "eq." + target, "role": "eq.student"},
+            "PATCH", {"id": "eq." + target, "role": "eq." + profile["role"]},
             {"approval_status": value},
         )
         if len(updated) != 1:
-            raise HTTPException(status_code=409, detail="Student changed; refresh and retry.")
+            raise HTTPException(status_code=409, detail="User changed; refresh and retry.")
     else:
         with connection() as db:
             db.execute("""
@@ -216,7 +216,7 @@ def change_access(student_id: UUID, payload: StudentAction, user: AdminUser):
                     suspended = excluded.suspended, updated_at = excluded.updated_at,
                     updated_by = excluded.updated_by
             """, (target, int(action == "suspend"), datetime.now(timezone.utc).isoformat(), user.id))
-    activity("student." + action, user, target, details={"email": profile.get("email")})
+    activity("user." + action, user, target, details={"email": profile.get("email")})
     return {"status": "updated"}
 
 

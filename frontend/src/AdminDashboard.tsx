@@ -74,6 +74,7 @@ function Meter({ title, value, detail }: { title: string; value: number; detail:
 export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise<void> }) {
   const [section, setSection] = useState<Section>("Overview");
   const [email, setEmail] = useState<string | null>(null);
+  const [adminId, setAdminId] = useState<string | null>(null);
   const [accessError, setAccessError] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -95,8 +96,11 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
 
   useEffect(() => {
     let active = true;
-    api<{ email: string }>("/me").then(data => {
-      if (active) setEmail(data.email);
+    api<{ id: string; email: string }>("/me").then(data => {
+      if (active) {
+        setEmail(data.email);
+        setAdminId(data.id);
+      }
     }).catch(err => {
       if (active) setAccessError(err instanceof Error ? err.message : "Access unavailable.");
     });
@@ -328,7 +332,7 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
               <td><Badge value={student.suspended ? "suspended" : student.approval_status} /></td>
               <td>{student.github_username ? `@${student.github_username}` : "Not connected"}</td>
               <td>{student.active_labs}</td>
-              <td>{student.role === "student" ? <div className="wb-admin-row-actions">
+              <td>{student.id !== adminId && ["student", "admin"].includes(student.role) ? <div className="wb-admin-row-actions">
                 {student.approval_status !== "approved" &&
                   <button disabled={busy} onClick={() => void changeStudent(student, "approve")}>Approve</button>}
                 {student.approval_status !== "rejected" &&
@@ -336,10 +340,10 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
                 <button disabled={busy} onClick={() => void changeStudent(student, student.suspended ? "restore" : "suspend")}>
                   {student.suspended ? "Restore" : "Suspend"}
                 </button>
-                {student.approval_status === "approved" && !student.suspended && (
+                {student.role === "student" && student.approval_status === "approved" && !student.suspended && (
                   <button disabled={busy} onClick={() => void grantAdmin(student)}>Make admin</button>
                 )}
-              </div> : <small>Admin account</small>}</td>
+              </div> : <small>{student.id === adminId ? "Your account" : "No actions available"}</small>}</td>
             </tr>)}</tbody>
           </table>{!loading && !students.length && <p className="wb-admin-empty">No matching accounts.</p>}</div>
           <p className="wb-admin-note">Approval and suspension are separate. Restoring a suspension does not approve a pending or rejected account.</p>
