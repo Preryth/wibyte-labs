@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 import "./AdminDashboard.css";
+import UsageStats from "./UsageStats";
 
-type Section = "Overview" | "Users" | "Notifications" | "Active labs" | "Platform health" | "Activity history";
+type Section = "Overview" | "Users" | "Notifications" | "Active labs" | "Usage stats" | "Platform health" | "Activity history";
 type Resources = {
   cpu_percent: number; cpu_cores: number; load_average: number[];
   memory_used: number; memory_total: number; disk_used: number; disk_total: number;
@@ -34,7 +35,7 @@ type AdminNotification = {
   id: number; created_at: string; category: string; severity: string;
   title: string; message: string; target_id: string | null; unread: boolean;
 };
-const sections: Section[] = ["Overview", "Users", "Notifications", "Active labs", "Platform health", "Activity history"];
+const sections: Section[] = ["Overview", "Users", "Notifications", "Active labs", "Usage stats", "Platform health", "Activity history"];
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { data } = await supabase.auth.getSession();
@@ -178,6 +179,8 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
             setUnreadCount(data.unread_count);
             setNotificationWarning(data.warning ?? "");
           }
+        } else if (section === "Usage stats") {
+          // UsageStats manages its own filters, requests and pagination.
         } else if (section === "Activity history") {
           const data = await api<{ events: Event[]; total: number }>(`/activity?page=${page}`);
           if (active) { setEvents(data.events); setTotal(data.total); }
@@ -581,6 +584,8 @@ export default function AdminDashboard({ onSignOut }: { onSignOut: () => Promise
             )}
           </div>
         </>}
+
+        {section === "Usage stats" && <UsageStats request={api} reload={reload} />}
 
         {section === "Activity history" && <>
           <p className="wb-admin-note">Events are recorded from dashboard installation onward. Times use your browser's time zone.</p>

@@ -218,6 +218,7 @@ class LabService:
     def remove(
         self,
         lab_id: str,
+        reason: str = "manual_close",
     ):
         """
         Remove a lab record from the database.
@@ -241,6 +242,11 @@ class LabService:
             if lab is None:
                 return None
 
+            from sqlalchemy import text
+            db.execute(
+                text("UPDATE usage_sessions SET close_reason = :reason WHERE lab_id = :lab_id"),
+                {"reason": reason, "lab_id": lab_id},
+            )
             db.delete(lab)
             db.commit()
 

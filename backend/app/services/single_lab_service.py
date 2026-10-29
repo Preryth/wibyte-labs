@@ -58,7 +58,7 @@ def create_single_lab(user, request, docker_client, create):
                 container = docker_client.containers.get(container_id)
             except docker.errors.NotFound:
                 # A missing container cannot be resumed.
-                lab_service.remove(lab_id)
+                lab_service.remove(lab_id, reason="container_missing")
             else:
                 existing.append((lab_id, container))
 
@@ -97,6 +97,6 @@ def create_single_lab(user, request, docker_client, create):
                     status_code=502,
                     detail="Could not close the existing lab. No new lab was opened.",
                 )
-            lab_service.remove(lab_id)
+            lab_service.remove(lab_id, reason="replaced_by_user")
 
         return create()

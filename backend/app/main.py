@@ -97,6 +97,10 @@ async def lifespan(
     and stop them cleanly when FastAPI shuts down.
     """
 
+    from backend.app.services import usage_service
+    await asyncio.to_thread(usage_service.initialize)
+    usage_task = asyncio.create_task(usage_service.run_forever())
+
     inactivity_task = asyncio.create_task(
         inactivity_service.run_forever()
     )
@@ -113,6 +117,8 @@ async def lifespan(
             "[WPL] Stopping inactivity cleanup worker."
         )
 
+        usage_task.cancel()
+        await asyncio.gather(usage_task, return_exceptions=True)
         inactivity_task.cancel()
 
         try:
@@ -311,13 +317,13 @@ def _create_lab_unchecked(user: CurrentUser):
             "github_connected": connection is not None,
         }
     except ValueError as exc:
-        try: lab_service.remove(session.id)
+        try: lab_service.remove(session.id, reason="creation_failed")
         except Exception: pass
         try: container.remove(force=True)
         except Exception: pass
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        try: lab_service.remove(session.id)
+        try: lab_service.remove(session.id, reason="creation_failed")
         except Exception: pass
         try: container.remove(force=True)
         except Exception: pass

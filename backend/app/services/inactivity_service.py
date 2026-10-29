@@ -251,8 +251,12 @@ class InactivityService:
                 container.remove(force=True)
                 removed = True
 
-            # Keep the notice after deleting the lab record.
+            # Keep the notice and usage history after deleting the lab record.
             db.execute("BEGIN IMMEDIATE")
+            db.execute(
+                "UPDATE usage_sessions SET close_reason = ? WHERE lab_id = ?",
+                (("admin_save:" if force else "inactivity:") + outcome, lab_id),
+            )
             db.execute(
                 "UPDATE lab_timeout_events SET outcome = ?, message = ? WHERE lab_id = ?",
                 (outcome, message, lab_id),

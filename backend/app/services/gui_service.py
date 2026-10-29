@@ -313,6 +313,8 @@ fi
                 + background.output.decode("utf-8", errors="replace")
             )
 
+        from backend.app.services.usage_service import mark_gui
+        mark_gui(container_id)
         return ready
 
     def _wait_for_process(

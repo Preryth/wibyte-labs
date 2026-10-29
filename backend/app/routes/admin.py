@@ -455,6 +455,10 @@ def terminate_lab(lab_id: UUID, payload: LabTermination, user: AdminUser, reques
                         ON CONFLICT(lab_id) DO UPDATE SET
                             outcome = excluded.outcome, message = excluded.message
                     """, (target, owner, message))
+                    db.execute(
+                        "UPDATE usage_sessions SET close_reason = 'admin_discard' WHERE lab_id = ?",
+                        (target,),
+                    )
                     db.execute("DELETE FROM labs WHERE id = ?", (target,))
             except HTTPException:
                 raise
@@ -679,3 +683,25 @@ def read_notification(notification_id: int, user: AdminUser):
             VALUES (?, ?, ?)
         """, (notification_id, user.id, datetime.now(timezone.utc).isoformat()))
     return {"status": "read"}
+
+
+# Historical usage is available only to verified administrators.
+@router.get("/usage")
+def usage_stats(
+    user: AdminUser,
+    period: Literal["24h", "week", "month", "all", "custom"] = "24h",
+    q: str = Query(default="", max_length=120),
+    gui: Literal["all", "yes", "no", "unknown"] = "all",
+    page: int = Query(default=1, ge=1),
+    start: float | None = None,
+    end: float | None = None,
+    lab_id: UUID | None = None,
+):
+    from backend.app.services.usage_reporting_service import report
+    try:
+        return report(
+            period=period, q=q, gui=gui, page=page, start=start, end=end,
+            lab_id=str(lab_id) if lab_id else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
