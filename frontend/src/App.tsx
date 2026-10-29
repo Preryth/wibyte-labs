@@ -20,6 +20,8 @@ import GitHubInstallPrompt from "./GitHubInstallPrompt";
 import AdminDashboard from "./AdminDashboard";
 
 import "./App.css";
+import type { CSSProperties } from "react";
+import { useLabFullscreen, FullscreenFilePicker } from "./LabFullscreen";
 import LoginScreen from "./LoginScreen";
 import ResetPasswordScreen from "./ResetPasswordScreen";
 import { supabase } from "./lib/supabase";
@@ -194,6 +196,9 @@ function LabApp({
     "Checking backend..."
   );
 
+  const {
+    fullscreenRef, isFullscreen, fullscreenBusy, fullscreenError, toggleFullscreen,
+  } = useLabFullscreen();
   const [editorWidth, setEditorWidth] = useState(60);
   const [sidebarWidth, setSidebarWidth] = useState(310);
 
@@ -2226,8 +2231,17 @@ useEffect(() => {
     );
 
 
+  useEffect(() => {
+    if (!labId && document.fullscreenElement === fullscreenRef.current) {
+      void document.exitFullscreen().catch(() => {});
+    }
+  }, [labId, fullscreenRef]);
+
   return (
-    <main className="app">
+    <main ref={fullscreenRef} className={`app${isFullscreen ? " wpl-fullscreen" : ""}`}>
+      {fullscreenError && <div className="wpl-fullscreen-error" role="alert">
+        {fullscreenError}
+      </div>}
       <dialog
         ref={labConflictDialogRef}
         className="welcome-dialog"
@@ -2338,9 +2352,44 @@ useEffect(() => {
   <section
     className="workspace"
     style={{
-      gridTemplateColumns: `min(${sidebarWidth}px, 40%) 8px minmax(0, 1fr)`,
+      gridTemplateColumns: isFullscreen
+        ? "150px minmax(0, 1fr)"
+        : `min(${sidebarWidth}px, 40%) 8px minmax(0, 1fr)`,
     }}
   >
+    <aside className="wpl-focus-rail" aria-label="Full-screen workspace controls">
+      <strong>WPL</strong>
+      <FullscreenFilePicker
+        labId={labId}
+        selectedFile={selectedFile}
+        disabled={fileOperationBusy || gitLoading}
+        enabled={isFullscreen}
+        onOpen={openFile}
+      />
+      <div className="wpl-focus-commit">
+<button
+              onClick={() => void commitGitChanges()}
+              disabled={
+                gitLoading || fileOperationBusy || !gitStatus ||
+                (gitStatus.clean && gitStatus.ahead === 0 &&
+                  lastCommitRef.current?.lab !== labId)
+              }
+              type="button"
+              style={
+                gitStatus && (!gitStatus.clean || gitStatus.ahead > 0 ||
+                  lastCommitRef.current?.lab === labId)
+                  ? { background: "#8b5cf6", color: "#fff" }
+                  : undefined
+              }
+            >
+              {gitLoading ? "Working..." : "Commit & Push"}
+            </button>
+      </div>
+      {githubError && <small role="status">{githubError}</small>}
+      {!activeGitHubRepositoryId && <small>Connect a repository in Settings outside full screen to push work.</small>}
+      <small className="wpl-focus-hint">Press Esc to exit full screen.</small>
+    </aside>
+
     <aside className="file-explorer">
 <section className="explorer-section workspace-section">
         <div className="file-panel-header">
@@ -2593,7 +2642,8 @@ useEffect(() => {
       className="editor-terminal"
       style={{
         gridTemplateColumns: `minmax(0, ${editorWidth}fr) 8px minmax(0, ${100 - editorWidth}fr)`,
-      }}
+        "--wpl-focus-columns": `minmax(0, ${editorWidth}fr) 8px minmax(0, ${100 - editorWidth}fr)`,
+      } as CSSProperties}
     >
       <div className="editor-section">
         <div className="editor-header">
@@ -2602,6 +2652,7 @@ useEffect(() => {
               "Welcome"}
           </span>
 
+          <div className="wpl-editor-view-controls">
           <button
             type="button"
             className="welcome-help-button"
@@ -2609,6 +2660,17 @@ useEffect(() => {
           >
             Help
           </button>
+            <button
+              type="button"
+              className="wpl-fullscreen-toggle"
+              onClick={() => void toggleFullscreen()}
+              disabled={fullscreenBusy}
+              aria-pressed={isFullscreen}
+              title={isFullscreen ? "Exit full screen (Esc)" : "Full-screen editor and terminal"}
+            >
+              {fullscreenBusy ? "Please wait…" : isFullscreen ? "Exit full screen" : "Full screen"}
+            </button>
+          </div>
 
           {selectedFile && (
             <div className="editor-actions">
@@ -2743,8 +2805,15 @@ useEffect(() => {
       />
 
       <div className="terminal-section">
-        <div className="panel-title">
-          TERMINAL
+        <div className="panel-title wpl-terminal-toolbar">
+          <span>TERMINAL</span>
+          <button
+            type="button"
+            onClick={() => terminalRef.current?.clear()}
+            title="Clear terminal output without stopping the program"
+          >
+            Clear
+          </button>
         </div>
 
         <Terminal

@@ -54,6 +54,7 @@ export type TerminalHandle = {
   ) => boolean;
 
   stopProcess: () => boolean;
+  clear: () => void;
 };
 
 
@@ -73,6 +74,8 @@ const Terminal = forwardRef<
       useRef<HTMLDivElement | null>(
         null,
       );
+
+    const xtermInstanceRef = useRef<XTerm | null>(null);
 
     const websocketRef =
       useRef<WebSocket | null>(
@@ -104,6 +107,13 @@ const Terminal = forwardRef<
     useImperativeHandle(
       ref,
       () => ({
+        clear() {
+          const terminal = xtermInstanceRef.current;
+          if (!terminal) return;
+          terminal.clear();
+          terminal.focus();
+        },
+
         runFile(path: string) {
           const websocket =
             websocketRef.current;
@@ -219,6 +229,7 @@ const Terminal = forwardRef<
       terminal.open(
         element,
       );
+      xtermInstanceRef.current = terminal;
 
 
       requestAnimationFrame(() => {
@@ -491,6 +502,9 @@ const Terminal = forwardRef<
         }
 
 
+        if (xtermInstanceRef.current === terminal) {
+          xtermInstanceRef.current = null;
+        }
         terminal.dispose();
       };
 
