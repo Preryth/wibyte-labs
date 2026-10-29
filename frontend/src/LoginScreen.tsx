@@ -328,6 +328,29 @@ function LoginScreen() {
           </p>
         </div>
 
+        <aside className="login-resources" aria-labelledby="login-resources-title">
+          <h2 id="login-resources-title">Getting started?</h2>
+          <p>Learn how to set up your account and use WiByte Python Lab.</p>
+          <div className="login-resource-links">
+            <a
+              href="https://docs.google.com/document/d/1V5-3zw8HZMNkJxKlrhYIAuwrE9S-BOO5R-xg4EAlL18/edit?usp=sharing"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Read the setup guide <span aria-hidden="true">↗</span>
+              <span className="login-resource-format">Google Docs · opens in a new tab</span>
+            </a>
+            <a
+              href="https://www.youtube.com/watch?v=8uczutafqG0"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Watch the preview video <span aria-hidden="true">↗</span>
+              <span className="login-resource-format">YouTube · opens in a new tab</span>
+            </a>
+          </div>
+        </aside>
+
         <div className="login-divider" />
 
         <h2 className="login-form-title">

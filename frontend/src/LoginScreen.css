@@ -205,3 +205,55 @@
   flex: 0 0 auto;
   margin-block: auto;
 }
+
+/* Login getting-started resources */
+.login-screen .login-resources {
+  margin-top: 24px;
+  padding: 18px;
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  border-radius: 12px;
+  background: rgba(139, 92, 246, 0.08);
+  text-align: left;
+}
+.login-screen .login-resources h2 {
+  margin: 0 0 8px;
+  color: #f4f4f5;
+  font-size: 17px;
+}
+.login-screen .login-resources p {
+  margin: 0 0 14px;
+  color: #b8beca;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.login-screen .login-resource-links {
+  display: grid;
+  gap: 10px;
+}
+.login-screen .login-resource-links a {
+  display: block;
+  padding: 12px 14px;
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  border-radius: 8px;
+  color: #ddd6fe;
+  background: rgba(139, 92, 246, 0.08);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.login-screen .login-resource-links a:hover {
+  background: rgba(139, 92, 246, 0.18);
+  border-color: #a78bfa;
+}
+.login-screen .login-resource-links a:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 3px;
+}
+.login-screen .login-resource-format {
+  display: block;
+  margin-top: 5px;
+  color: #b8beca;
+  font-size: 11px;
+  font-weight: 400;
+}
