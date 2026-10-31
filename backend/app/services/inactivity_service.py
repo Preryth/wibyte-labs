@@ -175,12 +175,21 @@ class InactivityService:
                 else:
                     message = self._success_message(committed, force=force)
                     outcome = "saved"
-            elif not github_connected and not force:
-                message = (
-                    "Your lab was closed due to inactivity. No GitHub account "
-                    "was connected, so no commit or push was made."
+            elif (not github_connected or not repository_id) and not force:
+                missing = (
+                    "No GitHub account was connected"
+                    if not github_connected else
+                    "No GitHub repository was linked to this lab"
                 )
-                outcome = "terminated_no_github"
+                message = (
+                    f"Your lab was closed due to inactivity. {missing}, "
+                    "so its files were not committed or pushed to GitHub. "
+                    "The lab's local files were removed."
+                )
+                outcome = (
+                    "terminated_no_github"
+                    if not github_connected else "terminated_no_repository"
+                )
                 container.remove(force=True)
                 removed = True
             else:
@@ -270,7 +279,7 @@ class InactivityService:
                 from backend.app.services.admin_store import activity
                 activity(
                     "lab.admin_save_close" if force else "lab.inactivity_close", target=lab_id,
-                    outcome="success" if outcome in ("saved", "terminated_no_github") else "failed",
+                    outcome="success" if outcome in ("saved", "terminated_no_github", "terminated_no_repository") else "failed",
                     details={"student_id": owner, "save_outcome": outcome},
                 )
             except Exception:
